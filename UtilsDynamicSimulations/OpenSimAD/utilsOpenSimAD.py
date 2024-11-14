@@ -2407,3 +2407,34 @@ def adjustBoundsAndDummyMotion(polynomial_bounds, updated_bounds, pathDummyMotio
         numpy_to_storage(labels, data, pathAdjustedDummyMotion, datatype='IK')
     
     return polynomial_bounds, pathAdjustedDummyMotion
+
+def createOpenCapFolderStructure(session_path,model_path_input,ik_path_input):
+    # create directories
+    os.makedirs(session_path, exist_ok=True)
+    osim_path = os.path.join(session_path, 'OpenSimData') 
+    os.makedirs(osim_path, exist_ok=True)
+    model_path = os.path.join(osim_path, 'Model')
+    kinematics_path = os.path.join(osim_path, 'Kinematics')
+    os.makedirs(model_path, exist_ok=True)
+    os.makedirs(kinematics_path, exist_ok=True)
+    
+    # get directory above this script
+    pathMain = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    
+    # if metadata doesn't exist, copy it from one folder above where this file is, then GRF_tracking, sessionMetadata_generic.yaml
+    if not os.path.exists(os.path.join(session_path, 'sessionMetadata.yaml')):
+        shutil.copy2(os.path.join(pathMain, 'GRF_tracking', 'sessionMetadata_generic.yaml'),
+                      os.path.join(session_path, 'sessionMetadata.yaml'))
+
+    # get the model file name
+    model_filename = os.path.basename(model_path_input)
+    # copy model from model_path to where it goes in folder structure
+    shutil.copy2(model_path_input,os.path.join(model_path,model_filename))
+
+    # get the kinematics file name
+    ik_filename = os.path.basename(ik_path_input)
+    # copy kinematics from ik_path to where it goes in folder structure
+    shutil.copy2(ik_path_input,os.path.join(kinematics_path,ik_filename))
+
+    return
+
