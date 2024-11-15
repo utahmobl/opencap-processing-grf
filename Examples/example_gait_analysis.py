@@ -41,8 +41,8 @@ dataFolder = os.path.join(baseDir, 'Data')
 example = 'treadmill'
 
 if example == 'treadmill':
-    session_id = '4d5c3eb1-1a59-4ea1-9178-d3634610561c' # 1.25m/s
-    trial_name = 'walk_1_25ms'
+    session_id = '2e440311-ac54-4c9e-8e5c-4e3cb85e8f6c' # 1.25m/s
+    trial_name = 'walking_baseline'
 
 elif example == 'overground':
     session_id = 'b39b10d1-17c7-4976-b06c-a6aaf33fead2'
