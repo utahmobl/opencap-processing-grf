@@ -1,0 +1,108 @@
+OpenSimModel: LaiUhlrich2022
+contact_side: all
+coordinate_constraints:
+  pelvis_tx:
+    env_bound: 0.1
+  pelvis_ty:
+    env_bound: 0.1
+coordinates_toTrack:
+  ankle_angle_l:
+    weight: 10
+  ankle_angle_r:
+    weight: 10
+  arm_add_l:
+    weight: 10
+  arm_add_r:
+    weight: 10
+  arm_flex_l:
+    weight: 10
+  arm_flex_r:
+    weight: 10
+  arm_rot_l:
+    weight: 10
+  arm_rot_r:
+    weight: 10
+  elbow_flex_l:
+    weight: 10
+  elbow_flex_r:
+    weight: 10
+  hip_adduction_l:
+    weight: 10
+  hip_adduction_r:
+    weight: 10
+  hip_flexion_l:
+    weight: 10
+  hip_flexion_r:
+    weight: 10
+  hip_rotation_l:
+    weight: 10
+  hip_rotation_r:
+    weight: 10
+  knee_angle_l:
+    weight: 10
+  knee_angle_r:
+    weight: 10
+  lumbar_bending:
+    weight: 10
+  lumbar_extension:
+    weight: 10
+  lumbar_rotation:
+    weight: 10
+  pelvis_list:
+    weight: 10
+  pelvis_rotation:
+    weight: 10
+  pelvis_tilt:
+    weight: 10
+  pelvis_tx:
+    weight: 5
+  pelvis_ty:
+    weight: 5
+  pelvis_tz:
+    weight: 5
+  pro_sup_l:
+    weight: 10
+  pro_sup_r:
+    weight: 10
+  subtalar_angle_l:
+    weight: 5
+  subtalar_angle_r:
+    weight: 5
+cutoff_freq_Qdds: 6
+cutoff_freq_Qds: 6
+cutoff_freq_Qs: 6
+enableLimitTorques: true
+filter_Qdds_toTrack: true
+filter_Qds_toTrack: true
+filter_Qs_toTrack: true
+height_m: 1.69
+ipopt_tolerance: 3
+mass_kg: 63.5
+meshDensity: 50
+periodicConstraints:
+  coordinateSpeeds:
+  - lowerLimbJoints
+  coordinateValues:
+  - pelvis_ty
+  lowerLimbJointActivations:
+  - all
+  lumbarJointActivations:
+  - all
+splineQds: true
+timeInterval:
+- 0.039
+- 1.107
+torque_driven_model: true
+treadmill_speed: 0
+trial_name: walking1
+useExpressionGraphFunction: true
+weights:
+  accelerationTrackingTerm: 50
+  activationDtTerm: 0.001
+  activationTerm: 1
+  armExcitationTerm: 0.001
+  forceDtTerm: 0.001
+  jointAccelerationTerm: 0.001
+  lumbarExcitationTerm: 0.001
+  positionTrackingTerm: 10
+  velocityTrackingTerm: 10

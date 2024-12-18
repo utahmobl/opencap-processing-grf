@@ -77,62 +77,37 @@ from utilsPlotting import plot_dataframe
 # your session.
 # Either opencap session id, or folder name with data
 # session_id = "4d5c3eb1-1a59-4ea1-9178-d3634610561c"
-session_id = 'test_mocap_data'
+session_id = 'OC_val'
 
 # Insert the name of the trial you want to simulate.
-trial_name = 'walk_1_25ms'
-
-# Insert the path to where you want the data to be downloaded.
-dataFolder = os.path.join(baseDir, 'Data')
+trial_name = 'walking1'
 
 # Insert the type of activity you want to simulate. We have pre-defined settings
 # for different activities (more details above). Visit 
 # ./UtilsDynamicSimulations/OpenSimAD/settingsOpenSimAD.py to see all available
 # activities and their settings. If your activity is not in the list, select
 # 'other' to use generic settings or set your own settings.
-motion_type = 'walking'
+sim_setting_name = 'walking_periodic_grf_tracking'
 
 # GRF additions
 # get directory of this file
 this_file_dir = os.path.dirname(os.path.abspath(__file__))
-example_data_dir = os.path.join(this_file_dir, 'GRF_tracking_data')
+dataFolder = os.path.join(this_file_dir, 'GRF_tracking_data')
+example_data_dir = os.path.join(dataFolder,session_id)
 
-session_path = os.path.join(dataFolder,session_id)
-model_path = os.path.join(example_data_dir,'LaiUhlrich2022_scaled.mot')
-ik_path = os.path.join(example_data_dir,'walking1.mot')
+model_path = os.path.join(example_data_dir,'LaiUhlrich2022_scaled.osim')
+ik_path = os.path.join(example_data_dir,'walking1.mot') # needs to be trialname.mot
 grf_path = os.path.join(example_data_dir,'walking1_forces.mot')
-createOpenCapFolderStructure(session_path,model_path,ik_path)
+createOpenCapFolderStructure(example_data_dir,model_path,ik_path)
+
+time_window = [0.039, 1.107] # rHS to rHS
+treadmill_speed = 0 # overground
 
 
-
-
-
-
-# Insert the time interval you want to simulate. It is recommended to simulate
-# trials shorter than 2s (more details above). Set to [] to simulate full trial.
-# We here selected a time window that corresponds to a full gait stride in order
-# to use periodic constraints. You can use the gait segmentation function to
-# automatically segment the gait cycle. Also insert the speed of the treadmill
-# in m/s. A positive value indicates that the subject is moving forward. 
-# You should ignore this parameter or set it to 0 if the trial was not measured
-# on a treadmill. You can also use the gait segmenter to automatically extract
-# the treadmill speed.
-segmentation_method = 'manual'
-if segmentation_method == 'automatic':
-    # Download the trial.
-    download_trial(get_trial_id(session_id,trial_name),
-                   os.path.join(dataFolder,session_id),
-                   session_id=session_id)    
-    time_window, gaitObject = segment_gait(
-        session_id, trial_name, dataFolder, gait_cycles_from_end=3)
-    treadmill_speed = gaitObject.treadmillSpeed
-else:
-    time_window = [5.7333333, 6.9333333]
-    treadmill_speed = 1.25
     
 # %% Sub-example 1: walking simulation with torque-driven model.
 # Insert a string to "name" you case.
-case = 'torque_driven'
+case = 'no_grf_tracking'
 
 # Prepare inputs for dynamic simulation (this will be skipped if already done):
 #   - Download data from OpenCap database
@@ -140,136 +115,12 @@ case = 'torque_driven'
 #   - Add foot-ground contacts
 #   - Generate external function (OpenSimAD)
 settings = processInputsOpenSimAD(
-    baseDir, dataFolder, session_id, trial_name, motion_type, 
+    baseDir, dataFolder, session_id, trial_name, sim_setting_name, 
     time_window=time_window, treadmill_speed=treadmill_speed)
 
-# Adjust settings for this example.
-# Set the model to be torque-driven.
-settings['torque_driven_model'] = True
-
-# Adjust the weights of the objective function and remove the default
-# muscle-related weigths. The objective function contains terms for tracking
-# coordinate values (positionTrackingTerm), speeds (velocityTrackingTerm), and
-# accelerations (accelerationTrackingTerm), as well as terms for minimizing
-# excitations of the ideal torque actuators at the arms (armExcitationTerm),
-# lumbar (lumbarExcitationTerm), and lower-extremity (coordinateExcitationTerm)
-# joints. The objective function also contains a regularization term that
-# minimizes the coordinate accelerations (jointAccelerationTerm).
-settings['weights'] = {
-    'positionTrackingTerm': 10,
-    'velocityTrackingTerm': 10,
-    'accelerationTrackingTerm': 50,
-    'armExcitationTerm': 0.001,
-    'lumbarExcitationTerm': 0.001,
-    'coordinateExcitationTerm': 1,
-    'jointAccelerationTerm': 0.001,}
-
-# Add periodic constraints to the problem. This will constrain initial and
-# final states of the problem to be the same. This is useful for obtaining
-# faster convergence. Please note that the walking trial we selected might not
-# be perfectly periodic. We here add periodic constraints to show how to do it.
-# We here add periodic constraints for the coordinate values (coordinateValues)
-# and coordinate speeds (coordinateSpeeds) of the lower-extremity joints
-# (lowerLimbJoints). We also add periodic constraints for the activations of the
-# ideal torque actuators at the lower-extremity (lowerLimbJointActivations) and
-# lumbar (lumbarJointActivations) joints. 
-settings['periodicConstraints'] = {
-    'coordinateValues': ['lowerLimbJoints'],
-    'coordinateSpeeds': ['lowerLimbJoints'],
-    'lowerLimbJointActivations': ['all'],
-    'lumbarJointActivations': ['all']}
-
-# Filter the data to be tracked. We here filter the coordinate values (Qs) with
-# a 6 Hz (cutoff_freq_Qs) low-pass filter, the coordinate speeds (Qds) with a 6
-# Hz (cutoff_freq_Qds) low-pass filter, and the coordinate accelerations (Qdds)
-# with a 6 Hz (cutoff_freq_Qdds) low-pass filter. We also compute the coordinate
-# accelerations by first splining the coordinate speeds (splineQds=True) and
-# then taking the first time derivative (default is to spline the coordinate
-# values and then take the second time derivative).
-settings['filter_Qs_toTrack'] = True
-settings['cutoff_freq_Qs'] = 6
-settings['filter_Qds_toTrack'] = True
-settings['cutoff_freq_Qds'] = 6
-settings['filter_Qdds_toTrack'] = True
-settings['cutoff_freq_Qdds'] = 6
-settings['splineQds'] = True
-
-# We set the mesh density to 50. We recommend using a mesh density of 100 by
-# default, but we here use a lower value to reduce the computation time.
-settings['meshDensity'] = 50
-
 # Run the dynamic simulation.
-if runTorqueDrivenProblem:
-    run_tracking(baseDir, dataFolder, session_id, settings, case=case)
-    # Plot some results.
-    plotResultsOpenSimAD(dataFolder, session_id, trial_name, settings, [case])
+run_tracking(baseDir, dataFolder, session_id, settings, case=case)
+# Plot some results.
+plotResultsOpenSimAD(dataFolder, session_id, trial_name, settings, [case])
 
-# %% Sub-example 2: walking simulation with muscle-driven model.
-# Insert a string to "name" you case.
-case = 'muscle_driven'
-
-# Prepare inputs for dynamic simulation (this will be skipped if already done):
-#   - Download data from OpenCap database
-#   - Adjust wrapping surfaces
-#   - Add foot-ground contacts
-#   - Generate external function (OpenSimAD)
-settings = processInputsOpenSimAD(
-    baseDir, dataFolder, session_id, trial_name, motion_type, 
-    time_window=time_window, treadmill_speed=treadmill_speed)
-
-# Add periodic constraints to the problem. This will constrain initial and
-# final states of the problem to be the same. This is useful for obtaining
-# faster convergence. Please note that the walking trial we selected might not
-# be perfectly periodic. We here add periodic constraints to show how to do it.
-# We here add periodic constraints for the coordinate values (coordinateValues)
-# and coordinate speeds (coordinateSpeeds) of the lower-extremity joints
-# (lowerLimbJoints). We also add periodic constraints for the activations and
-# forces of all muscles acuating the lower-extremity (muscleActivationsForces)
-# and for activations of the ideal torque actuators at the lumbar
-# (lumbarJointActivations) joints. 
-settings['periodicConstraints'] = {
-    'coordinateValues': ['lowerLimbJoints'],
-    'coordinateSpeeds': ['lowerLimbJoints'],
-    'muscleActivationsForces': ['all'],
-    'lumbarJointActivations': ['all']}
-
-# Filter the data to be tracked. We here filter the coordinate values (Qs) with
-# a 6 Hz (cutoff_freq_Qs) low-pass filter, the coordinate speeds (Qds) with a 6
-# Hz (cutoff_freq_Qds) low-pass filter, and the coordinate accelerations (Qdds)
-# with a 6 Hz (cutoff_freq_Qdds) low-pass filter. We also compute the coordinate
-# accelerations by first splining the coordinate speeds (splineQds=True) and
-# then taking the first time derivative (default is to spline the coordinate
-# values and then take the second time derivative).
-settings['filter_Qs_toTrack'] = True
-settings['cutoff_freq_Qs'] = 6
-settings['filter_Qds_toTrack'] = True
-settings['cutoff_freq_Qds'] = 6
-settings['filter_Qdds_toTrack'] = True
-settings['cutoff_freq_Qdds'] = 6
-settings['splineQds'] = True
-
-# We set the mesh density to 50. We recommend using a mesh density of 100 by
-# default, but we here use a lower value to reduce the computation time.
-settings['meshDensity'] = 50
-
-# Run the dynamic simulation.
-if runMuscleDrivenProblem:
-    run_tracking(baseDir, dataFolder, session_id, settings, case=case)
-    # Plot some results.
-    plotResultsOpenSimAD(dataFolder, session_id, trial_name, settings, [case])
-
-    # Retrieve results from the optimal solution using utilsKineticsOpenSimAD.
-    opt_sol_obj = kineticsOpenSimAD(dataFolder, session_id, trial_name, case)
-    # Extract and plot muscle forces.
-    muscle_forces = opt_sol_obj.get_muscle_forces()
-    plot_dataframe(
-        dataframes = [muscle_forces],
-        xlabel = 'Time (s)',
-        ylabel = 'Force (N)',
-        title = 'Muscle forces',
-        labels = [trial_name])
-
-# %% Comparison torque-driven vs. muscle-driven model.
-if runComparison:
-    plotResultsOpenSimAD(dataFolder, session_id, trial_name, settings,
-                        ['torque_driven', 'muscle_driven'])
+test = 1
