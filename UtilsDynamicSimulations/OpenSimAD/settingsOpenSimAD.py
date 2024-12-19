@@ -625,7 +625,8 @@ def get_setup(motion_type):
             'positionTrackingTerm': 10,
             'velocityTrackingTerm': 10,
             'accelerationTrackingTerm': 50,
-            'activationTerm': 1,
+            'grfTrackingTerm': 0.001,
+            'activationTerm': 100,
             'armExcitationTerm': 0.001,
             'lumbarExcitationTerm': 0.001,
             'jointAccelerationTerm': 0.001,
@@ -664,7 +665,9 @@ def get_setup(motion_type):
             'pro_sup_l': {"weight": 10},
             'pro_sup_r': {"weight": 10}},
         'grfs_toTrack': {
-            'x': {"weight": 10}},          
+            'x': {"weight": 10}}, 
+        'filter_grfs_toTrack': True,
+        'cutoff_freq_grfs': 6,        
         'coordinate_constraints': {
             'pelvis_ty': {"env_bound": 0.1},
             'pelvis_tx': {"env_bound": 0.1}},
@@ -678,11 +681,17 @@ def get_setup(motion_type):
         'splineQds': True,
         'torque_driven_model': True,
         'periodicConstraints': {
-            'coordinateValues': [
-                'pelvis_ty'
-                ],
+            'coordinateValues': ['pelvis_tilt', 'pelvis_list', 'pelvis_rotation', 
+                   'pelvis_ty', 'pelvis_tz', 'hip_flexion_l', 
+                   'hip_adduction_l', 'hip_rotation_l', 'hip_flexion_r',
+                   'hip_adduction_r', 'hip_rotation_r', 'knee_angle_l',
+                   'knee_angle_r', 'ankle_angle_l', 'ankle_angle_r', 
+                   'subtalar_angle_l', 'subtalar_angle_r', 'mtp_angle_l',
+                   'mtp_angle_r', 'lumbar_extension', 'lumbar_bending',
+                   'lumbar_rotation'],
             'coordinateSpeeds': ['lowerLimbJoints'],
             'lowerLimbJointActivations': ['all'],
+            # 'muscleActivationsForces': ['all'],
             'lumbarJointActivations': ['all']},
         'meshDensity': 50} # TODO RETURN TO 100
     

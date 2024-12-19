@@ -56,6 +56,8 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
         weights['forceDtTerm'] = settings['weights']['forceDtTerm']
     if 'activationDtTerm' in settings['weights']:
         weights['activationDtTerm'] = settings['weights']['activationDtTerm']
+    if 'grfTrackingTerm' in settings['weights']:
+        weights['grfTrackingTerm'] = settings['weights']['grfTrackingTerm']
     
     # Model info.
     # Model name.
@@ -212,6 +214,22 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
         cutoff_freq_Qdds = 30 # default.
         if 'cutoff_freq_Qdds' in settings:
             cutoff_freq_Qdds = settings['cutoff_freq_Qdds']
+    
+    track_grfs = False
+    if 'grfs_toTrack' in settings:
+        track_grfs = True
+        # TODO emily filling in
+        w_grf_tracking = [0, 1, 0]
+    
+    # Set filter_grfs_toTrack to True to filter the ground reaction forces
+    # to be tracked with a cutoff frequency of cutoff_freq_grfs.
+    filter_grfs_toTrack = True
+    if 'filter_grfs_toTrack' in settings:
+        filter_grfs_toTrack = settings['filter_grfs_toTrack']
+    if filter_grfs_toTrack:
+        cutoff_freq_grfs = 30
+        if 'cutoff_freq_grfs' in settings:
+            cutoff_freq_grfs = settings['cutoff_freq_grfs']
          
     # Set splineQds to True to compute the coordinate accelerations by
     # first splining the coordinate speeds and then taking the derivative.
@@ -232,6 +250,7 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
     # Problem info.
     # Coordinates to track.
     coordinates_toTrack = settings['coordinates_toTrack']
+
     
     # Set offset_ty to True to include an optimization variable in the problem
     # that will offset the vertical pelvis position (pelvis_ty). This is used
@@ -612,9 +631,38 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
         dampingArm = 0.1
         f_linearPassiveArmTorque = linarPassiveTorque(stiffnessArm, dampingArm)
         
-    # %% Kinematic data to track.
+    # %% Tracking functions for IK and GRFs
     from utilsOpenSimAD import getIK, filterDataFrame
     from utilsOpenSimAD import interpolateDataFrame, selectDataFrame
+    from utilsOpenSimAD import scaleDataFrame, selectFromDataFrame     
+
+
+    # %% GRF data to track
+    if track_grfs:
+        from utilsOpenSimAD import getGRF
+        pathGRF = os.path.join(pathForceFolder, trialName + '_predForces.mot')
+        GRF_input = getGRF(pathGRF)
+
+        # Filtering
+        if filter_grfs_toTrack:
+            GRF_input_filter = filterDataFrame(
+                GRF_input, cutoff_frequency=cutoff_freq_grfs)  
+        else:
+            GRF_input_filter = GRF_input
+
+        # Interpolation
+        GRF_interp = interpolateDataFrame(
+            GRF_input_filter, timeIntervals[0], timeIntervals[1], N)
+        legs = ['r', 'l']
+        direcs = ['x', 'y','z']
+        GRF_toTrack = {}
+        for leg in legs:
+            cols_to_pull = ['grf_' + leg + '_' + d for d in direcs]
+            GRF_toTrack[leg] = selectFromDataFrame(
+            GRF_interp, cols_to_pull).to_numpy()[:,1:] # grf_x,y,z for each leg
+        
+    # %% Kinematic data to track.
+
     pathIK = os.path.join(pathIKFolder, trialName + '.mot')
     Qs_fromIK = getIK(pathIK, joints)
     # Filtering.
@@ -641,7 +689,6 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
             w_dataToTrack[count, 0] = coordinates_toTrack[coord]['weight']      
     idx_coordinates_toTrack = getIndices(joints, coordinates_toTrack_l)
     
-    from utilsOpenSimAD import scaleDataFrame, selectFromDataFrame     
     dataToTrack_Qs_nsc = selectFromDataFrame(
         Qs_toTrack, coordinates_toTrack_l).to_numpy()[:,1::].T
     
@@ -928,6 +975,10 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
                           F_map['body_origins']['calcn_r'][1],
                           F_map['body_origins']['toes_l'][1],
                           F_map['body_origins']['toes_r'][1]]
+    if track_grfs:
+        idx_grf = {}
+        idx_grf['r'] = F_map['GRFs']['right']
+        idx_grf['l'] = F_map['GRFs']['left']
 
     # Lists to map order of coordinates defined here and in external function.
     idxGroundPelvisJointsinF = [F_map['residuals'][joint] 
@@ -944,6 +995,7 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
     f_NMusclesSumWeightedPow = normSumWeightedPow(nMuscles, powActivations)
     f_nJointsSum2 = normSumSqr(nJoints)
     f_NQsToTrackWSum2 = normSumWeightedSqrDiff(nEl_toTrack)
+    f_nGRFsToTrackWSum2 = normSumWeightedSqrDiff(3)
     if withArms:
         f_nArmJointsSum2 = normSumSqr(nArmJoints)
     if withLumbarCoordinateActuators:
@@ -1702,8 +1754,18 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
                             (ca.sum1(Tk[idx_vGRF_front[side]])) /
                             (ca.sum1(Tk[idx_vGRF_rear[side]])))
                         J += (weights['vGRFRatioTerm'] * 
-                              (vGRF_ratio) * h * B[j + 1])                 
-             
+                              (vGRF_ratio) * h * B[j + 1])
+
+                if track_grfs and weights['grfTrackingTerm'] > 0:
+                    for leg in ['r', 'l']:
+                        grfTrackingTerm = f_nGRFsToTrackWSum2(
+                        Tk[idx_grf[leg], 0],
+                        GRF_toTrack[leg][k,:], w_grf_tracking)
+                        J += (weights['grfTrackingTerm'] * grfTrackingTerm 
+                              * h * B[j + 1])
+                        
+
+                    
             # Note: we only impose the following constraints at the mesh
             # points. To be fully consistent with an orthogonal radau
             # collocation scheme, we should impose them at the collocation
@@ -2270,6 +2332,8 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
         jointAccelerationTerm_opt_all = 0        
         positionTrackingTerm_opt_all = 0
         velocityTrackingTerm_opt_all = 0
+        if track_grfs:
+            grfTrackingTerm_opt_all = 0
         if withReserveActuators:    
             reserveActuatorTerm_opt_all = 0
         if min_ratio_vGRF and weights['vGRFRatioTerm'] > 0:
@@ -2390,6 +2454,10 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
                 jointAccelerationTerm_opt = f_nJointsSum2(Qddsk_opt)                
                 positionTrackingTerm_opt = f_NQsToTrackWSum2(Qskj_opt[idx_coordinates_toTrack, 0], dataToTrack_Qs_sc_offset_opt[:, k], w_dataToTrack)                
                 velocityTrackingTerm_opt = f_NQsToTrackWSum2(Qdskj_opt[idx_coordinates_toTrack, 0], dataToTrack_Qds_sc[:, k], w_dataToTrack)                    
+                if track_grfs:
+                    grfTrackingTerm_opt = (f_nGRFsToTrackWSum2(GRF_all_opt['right'][:,k], GRF_toTrack['r'][k,:], w_grf_tracking) +
+                                            f_nGRFsToTrackWSum2(GRF_all_opt['left'][:,k], GRF_toTrack['l'][k,:], w_grf_tracking))                                                          
+                    grfTrackingTerm_opt_all += weights['grfTrackingTerm'] * grfTrackingTerm_opt  * h * B[j + 1]              
                 positionTrackingTerm_opt_all += weights['positionTrackingTerm'] * positionTrackingTerm_opt * h * B[j + 1]
                 velocityTrackingTerm_opt_all += weights['velocityTrackingTerm'] * velocityTrackingTerm_opt * h * B[j + 1]
                 jointAccelerationTerm_opt_all += weights['jointAccelerationTerm'] * jointAccelerationTerm_opt * h * B[j + 1]                
@@ -2440,6 +2508,8 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
                       velocityTrackingTerm_opt_all.full())
         if trackQdds:
             JTrack_opt += accelerationTrackingTerm_opt_all.full()
+        if track_grfs:
+            JTrack_opt += grfTrackingTerm_opt_all.full()
         # Combined terms.
         JAll_opt = JTrack_opt + JMotor_opt
         if stats['success']:
@@ -2476,6 +2546,9 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
         
         JTerms["positionTerm_sc"] = JTerms["positionTerm"] / JAll_opt[0][0]
         JTerms["velocityTerm_sc"] = JTerms["velocityTerm"] / JAll_opt[0][0]
+
+        if track_grfs:
+            JTerms["grfTrackingTerm_sc"] = grfTrackingTerm_opt_all.full()[0][0] / JAll_opt[0][0]
         if trackQdds:
             JTerms["accelerationTerm_sc"] = JTerms["accelerationTerm"] / JAll_opt[0][0]                
         # Print out contributions to the cost function.
@@ -2493,6 +2566,8 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
         print("\tJoint accelerations: {}%".format(np.round(JTerms["jointAccelerationTerm_sc"] * 100, 2)))        
         print("\tPosition tracking: {}%".format(np.round(JTerms["positionTerm_sc"] * 100, 2)))
         print("\tVelocity tracking: {}%".format(np.round(JTerms["velocityTerm_sc"] * 100, 2)))
+        if track_grfs:
+            print("\tGRF tracking: {}%".format(np.round(JTerms["grfTrackingTerm_sc"] * 100, 2)))
         if trackQdds:
             print("\tAcceleration tracking: {}%".format(np.round(JTerms["accelerationTerm_sc"] * 100, 2)))           
         print("\nNumber of iterations: {}\n".format(stats["iter_count"]))

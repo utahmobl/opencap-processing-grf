@@ -497,6 +497,25 @@ def getIK(storage_file, joints, degrees=False):
                 
     return Qs
 
+# %% Extract grf data
+def getGRF(storage_file,forceNames=None):
+    # forceNames is a dict with ['r','l','suffix']
+    if forceNames is None:
+        forceNames = {'r':'R_ground_force',
+                      'l':'L_ground_force',
+                      'suffix':'_v'}
+    direction = ['x','y','z']
+
+    data = storage_to_numpy(storage_file)  
+    GRFs = pd.DataFrame(data=data['time'], columns=['time'])
+    # loop over 'l' and 'r', looking for column forceNames + suffix + all 3 directions. Put them into grf_r_x, grf_r_y, grf_r_z, grf_l_x, grf_l_y, grf_l_z
+    for side in ['r','l']:
+        for d in direction:
+            GRFs.insert(len(GRFs.columns), 'grf_'+side+'_'+d, data[forceNames[side]+forceNames['suffix']+d])
+    
+    return GRFs
+
+
 # %% Get moment arm indices.
 def getMomentArmIndices(rightMuscles, leftPolynomialJoints,
                         rightPolynomialJoints, polynomialData):

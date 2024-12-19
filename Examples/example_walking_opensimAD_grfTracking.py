@@ -92,7 +92,7 @@ sim_setting_name = 'walking_periodic_grf_tracking'
 # GRF additions
 # get directory of this file
 this_file_dir = os.path.dirname(os.path.abspath(__file__))
-dataFolder = os.path.join(this_file_dir, 'GRF_tracking_data')
+dataFolder = os.path.join(this_file_dir,'..','Data','GRF_tracking_data')
 example_data_dir = os.path.join(dataFolder,session_id)
 
 model_path = os.path.join(example_data_dir,'LaiUhlrich2022_scaled.osim')
@@ -100,14 +100,15 @@ ik_path = os.path.join(example_data_dir,'walking1.mot') # needs to be trialname.
 grf_path = os.path.join(example_data_dir,'walking1_forces.mot')
 createOpenCapFolderStructure(example_data_dir,model_path,ik_path)
 
-time_window = [0.039, 1.107] # rHS to rHS
+time_window = [0.02, 1.09] # rHS to rHS
+# time_window = [0, 1.10]
 treadmill_speed = 0 # overground
 
 
     
 # %% Sub-example 1: walking simulation with torque-driven model.
 # Insert a string to "name" you case.
-case = 'no_grf_tracking'
+case = 'case5_y_only'
 
 # Prepare inputs for dynamic simulation (this will be skipped if already done):
 #   - Download data from OpenCap database
@@ -119,7 +120,7 @@ settings = processInputsOpenSimAD(
     time_window=time_window, treadmill_speed=treadmill_speed)
 
 # Run the dynamic simulation.
-run_tracking(baseDir, dataFolder, session_id, settings, case=case)
+# run_tracking(baseDir, dataFolder, session_id, settings, case=case)
 # Plot some results.
 plotResultsOpenSimAD(dataFolder, session_id, trial_name, settings, [case])
 
