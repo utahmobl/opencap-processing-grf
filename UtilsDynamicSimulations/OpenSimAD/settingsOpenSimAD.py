@@ -665,7 +665,7 @@ def get_setup(motion_type):
             'pro_sup_l': {"weight": 10},
             'pro_sup_r': {"weight": 10}},
         'grfs_toTrack': {
-            'x': {"weight": 10}}, 
+            'all': {"weight": 10}}, 
         'filter_grfs_toTrack': True,
         'cutoff_freq_grfs': 6,        
         'coordinate_constraints': {

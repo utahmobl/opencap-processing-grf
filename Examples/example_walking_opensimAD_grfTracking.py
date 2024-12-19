@@ -108,7 +108,7 @@ treadmill_speed = 0 # overground
     
 # %% Sub-example 1: walking simulation with torque-driven model.
 # Insert a string to "name" you case.
-case = 'case5_y_only'
+case = 'test'
 
 # Prepare inputs for dynamic simulation (this will be skipped if already done):
 #   - Download data from OpenCap database
@@ -120,7 +120,7 @@ settings = processInputsOpenSimAD(
     time_window=time_window, treadmill_speed=treadmill_speed)
 
 # Run the dynamic simulation.
-# run_tracking(baseDir, dataFolder, session_id, settings, case=case)
+run_tracking(baseDir, dataFolder, session_id, settings, case=case)
 # Plot some results.
 plotResultsOpenSimAD(dataFolder, session_id, trial_name, settings, [case])
 

@@ -220,14 +220,14 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
         track_grfs = True
         w_grf_tracking = np.zeros((3,))
         if 'all' in settings['grfs_toTrack']:
-            w_grf_tracking = settings['grfs_toTrack']['weights']*numpy.ones((3,))
+            w_grf_tracking = settings['grfs_toTrack']['all']['weight']*np.ones((3,))
         else:
             if 'x' in settings['grfs_toTrack']:
-                w_grf_tracking[0] = settings['grfs_toTrack']['x']
+                w_grf_tracking[0] = settings['grfs_toTrack']['x']['weight']
             if 'y' in settings['grfs_toTrack']:
-                w_grf_tracking[1] = settings['grfs_toTrack']['y']
+                w_grf_tracking[1] = settings['grfs_toTrack']['y']['weight']
             if 'z' in settings['grfs_toTrack']:
-                w_grf_tracking[2] = settings['grfs_toTrack']['z']
+                w_grf_tracking[2] = settings['grfs_toTrack']['z']['weight']
     
     # Set filter_grfs_toTrack to True to filter the ground reaction forces
     # to be tracked with a cutoff frequency of cutoff_freq_grfs.
