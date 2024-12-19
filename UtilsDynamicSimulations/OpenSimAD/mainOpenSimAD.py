@@ -219,7 +219,7 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
     if 'grfs_toTrack' in settings and settings['weights']['grfTrackingTerm'] > 0:
         track_grfs = True
         w_grf_tracking = np.zeros((3,))
-        if 'all' in settings['grfs_toTrack'] =:
+        if 'all' in settings['grfs_toTrack']:
             w_grf_tracking = settings['grfs_toTrack']['weights']*numpy.ones((3,))
         else:
             if 'x' in settings['grfs_toTrack']:
