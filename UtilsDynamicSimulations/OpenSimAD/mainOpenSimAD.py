@@ -58,6 +58,8 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
         weights['activationDtTerm'] = settings['weights']['activationDtTerm']
     if 'grfTrackingTerm' in settings['weights']:
         weights['grfTrackingTerm'] = settings['weights']['grfTrackingTerm']
+    if 'pelvisResidualsTerm' in settings['weights']:
+        weights['pelvisResidualsTerm'] = settings['weights']['pelvisResidualsTerm']
     
     # Model info.
     # Model name.
@@ -238,6 +240,17 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
         cutoff_freq_grfs = 30
         if 'cutoff_freq_grfs' in settings:
             cutoff_freq_grfs = settings['cutoff_freq_grfs']
+
+    # Allow residuals - only makes sense when tracking grfs
+    allowPelvisResiduals = False
+    if 'allowPelvisResiduals' in settings:
+        allowPelvisResiduals = settings['allowPelvisResiduals'] 
+        
+        if not track_grfs:
+            allowPelvisResiduals = False
+            print('Pelvis residuals are only allowed when tracking GRFs,' 
+                  'we are not allowing them despite allowPelvisResiduals = True.')
+
          
     # Set splineQds to True to compute the coordinate accelerations by
     # first splining the coordinate speeds and then taking the derivative.
@@ -537,6 +550,13 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
     groundPelvisJoints = ['pelvis_tilt', 'pelvis_list', 'pelvis_rotation',
                           'pelvis_tx', 'pelvis_ty', 'pelvis_tz']
     groundPelvisJointsForces = ['pelvis_tx', 'pelvis_ty', 'pelvis_tz']
+
+    # Weights for residual tracking
+    if allowPelvisResiduals:
+        w_pelvis_residuals = np.ones((6,)) # fxyz, mxyz
+        if 'pelvisResiduals_toTrack' in settings:
+            for i, coord in enumerate(groundPelvisJoints):
+                w_pelvis_residuals[i] = settings['pelvisResiduals_toTrack'][coord]['weight']
     
     # Lumbar coordinates (for torque actuators).    
     lumbarJoints = ['lumbar_extension', 'lumbar_bending', 'lumbar_rotation']
@@ -647,9 +667,9 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
 
     # %% GRF data to track
     if track_grfs:
-        from utilsOpenSimAD import getGRF
+        from utilsOpenSimAD import getGRF_forTracking
         pathGRF = os.path.join(pathForceFolder, trialName + '_predForces.mot')
-        GRF_input = getGRF(pathGRF)
+        GRF_input = getGRF_forTracking(pathGRF)
 
         # Filtering
         if filter_grfs_toTrack:
@@ -1004,6 +1024,7 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
     f_nJointsSum2 = normSumSqr(nJoints)
     f_NQsToTrackWSum2 = normSumWeightedSqrDiff(nEl_toTrack)
     f_nGRFsToTrackWSum2 = normSumWeightedSqrDiff(3)
+    f_nPelvisResidualsSum2 = normSumWeightedPow(6,2)
     if withArms:
         f_nArmJointsSum2 = normSumSqr(nArmJoints)
     if withLumbarCoordinateActuators:
@@ -1772,6 +1793,12 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
                         J += (weights['grfTrackingTerm'] * grfTrackingTerm 
                               * h * B[j + 1])
                         
+                if allowPelvisResiduals and weights['pelvisResidualsTerm'] > 0:
+                    pelvisResidualsTerm = f_nPelvisResidualsSum2(
+                        Tk[idxGroundPelvisJointsinF, 0], w_pelvis_residuals)
+                    J += (weights['pelvisResidualsTerm'] * 
+                          pelvisResidualsTerm * h * B[j + 1])
+                        
 
                     
             # Note: we only impose the following constraints at the mesh
@@ -1779,7 +1806,8 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
             # collocation scheme, we should impose them at the collocation
             # points too. This would increase the size of the problem.
             # Null pelvis residuals (dynamic consistency).
-            opti.subject_to(Tk[idxGroundPelvisJointsinF, 0] == 0)
+            if not allowPelvisResiduals:
+                opti.subject_to(Tk[idxGroundPelvisJointsinF, 0] == 0)
             
             # Skeleton dynamics.
             if torque_driven_model:
@@ -2189,6 +2217,11 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
         # Extract joint torques.            
         torques_opt = F_out_pp[
             [F_map['residuals'][joint] for joint in joints], :]
+        
+        # extract pelvis residuals
+        if allowPelvisResiduals:
+            pelvisResiduals_opt = F_out_pp[
+                idxGroundPelvisJointsinF, :]    
             
         # %% Write files for visualization in OpenSim GUI.
         # Convert to degrees.
@@ -2342,6 +2375,8 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
         velocityTrackingTerm_opt_all = 0
         if track_grfs:
             grfTrackingTerm_opt_all = 0
+        if allowPelvisResiduals:
+            pelvisResidualsTrackingTerm_opt_all = 0
         if withReserveActuators:    
             reserveActuatorTerm_opt_all = 0
         if min_ratio_vGRF and weights['vGRFRatioTerm'] > 0:
@@ -2465,7 +2500,11 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
                 if track_grfs:
                     grfTrackingTerm_opt = (f_nGRFsToTrackWSum2(GRF_all_opt['right'][:,k], GRF_toTrack['r'][k,:], w_grf_tracking) +
                                             f_nGRFsToTrackWSum2(GRF_all_opt['left'][:,k], GRF_toTrack['l'][k,:], w_grf_tracking))                                                          
-                    grfTrackingTerm_opt_all += weights['grfTrackingTerm'] * grfTrackingTerm_opt  * h * B[j + 1]              
+                    grfTrackingTerm_opt_all += weights['grfTrackingTerm'] * grfTrackingTerm_opt  * h * B[j + 1]  
+                if allowPelvisResiduals:
+                    pelvisResidualsTrackingTerm_opt = f_nPelvisResidualsSum2(
+                        pelvisResiduals_opt[:,k], w_pelvis_residuals)
+                    pelvisResidualsTrackingTerm_opt_all += weights['pelvisResidualsTerm'] * pelvisResidualsTrackingTerm_opt * h * B[j + 1]            
                 positionTrackingTerm_opt_all += weights['positionTrackingTerm'] * positionTrackingTerm_opt * h * B[j + 1]
                 velocityTrackingTerm_opt_all += weights['velocityTrackingTerm'] * velocityTrackingTerm_opt * h * B[j + 1]
                 jointAccelerationTerm_opt_all += weights['jointAccelerationTerm'] * jointAccelerationTerm_opt * h * B[j + 1]                
@@ -2518,6 +2557,8 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
             JTrack_opt += accelerationTrackingTerm_opt_all.full()
         if track_grfs:
             JTrack_opt += grfTrackingTerm_opt_all.full()
+        if allowPelvisResiduals:
+            JTrack_opt += pelvisResidualsTrackingTerm_opt_all.full()
         # Combined terms.
         JAll_opt = JTrack_opt + JMotor_opt
         if stats['success']:
@@ -2557,6 +2598,8 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
 
         if track_grfs:
             JTerms["grfTrackingTerm_sc"] = grfTrackingTerm_opt_all.full()[0][0] / JAll_opt[0][0]
+        if allowPelvisResiduals:
+            JTerms["pelvisResidualsTerm_sc"] = pelvisResidualsTrackingTerm_opt_all.full()[0][0] / JAll_opt[0][0]
         if trackQdds:
             JTerms["accelerationTerm_sc"] = JTerms["accelerationTerm"] / JAll_opt[0][0]                
         # Print out contributions to the cost function.
@@ -2576,6 +2619,8 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
         print("\tVelocity tracking: {}%".format(np.round(JTerms["velocityTerm_sc"] * 100, 2)))
         if track_grfs:
             print("\tGRF tracking: {}%".format(np.round(JTerms["grfTrackingTerm_sc"] * 100, 2)))
+        if allowPelvisResiduals:
+            print("\tPelvis residuals tracking: {}%".format(np.round(JTerms["pelvisResidualsTerm_sc"] * 100, 2)))
         if trackQdds:
             print("\tAcceleration tracking: {}%".format(np.round(JTerms["accelerationTerm_sc"] * 100, 2)))           
         print("\nNumber of iterations: {}\n".format(stats["iter_count"]))

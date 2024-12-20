@@ -622,11 +622,13 @@ def get_setup(motion_type):
     setups['walking_periodic_grf_tracking'] = {
         'ipopt_tolerance': 3,
         'weights': {
-            'positionTrackingTerm': 10,
-            'velocityTrackingTerm': 10,
-            'accelerationTrackingTerm': 50,
+            'positionTrackingTerm': 1000,
+            'velocityTrackingTerm': 100,
+            'accelerationTrackingTerm': .1,
             'grfTrackingTerm': 0.001,
+            'pelvisResidualsTerm': .001,
             'activationTerm': 100,
+            'coordinateExcitationTerm': 10, 
             'armExcitationTerm': 0.001,
             'lumbarExcitationTerm': 0.001,
             'jointAccelerationTerm': 0.001,
@@ -666,8 +668,16 @@ def get_setup(motion_type):
             'pro_sup_r': {"weight": 10}},
         'grfs_toTrack': {
             'all': {"weight": 10}}, 
+        'pelvisResiduals_toTrack': {
+            'pelvis_tx': {"weight": 1},
+            'pelvis_ty': {"weight": 1},
+            'pelvis_tz': {"weight": 1},
+            'pelvis_tilt': {"weight": 100},
+            'pelvis_list': {"weight": 100},
+            'pelvis_rotation': {"weight": 100}},
         'filter_grfs_toTrack': True,
-        'cutoff_freq_grfs': 6,        
+        'cutoff_freq_grfs': 6,
+        'allowPelvisResiduals': True,        
         'coordinate_constraints': {
             'pelvis_ty': {"env_bound": 0.1},
             'pelvis_tx': {"env_bound": 0.1}},

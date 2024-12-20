@@ -498,7 +498,7 @@ def getIK(storage_file, joints, degrees=False):
     return Qs
 
 # %% Extract grf data
-def getGRF(storage_file,forceNames=None):
+def getGRF_forTracking(storage_file,forceNames=None):
     # forceNames is a dict with ['r','l','suffix']
     if forceNames is None:
         forceNames = {'r':'R_ground_force',

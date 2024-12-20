@@ -77,7 +77,7 @@ from utilsPlotting import plot_dataframe
 # your session.
 # Either opencap session id, or folder name with data
 # session_id = "4d5c3eb1-1a59-4ea1-9178-d3634610561c"
-session_id = 'OC_val'
+session_id = 'OC_val_mocap'
 
 # Insert the name of the trial you want to simulate.
 trial_name = 'walking1'
@@ -100,15 +100,15 @@ ik_path = os.path.join(example_data_dir,'walking1.mot') # needs to be trialname.
 grf_path = os.path.join(example_data_dir,'walking1_forces.mot')
 createOpenCapFolderStructure(example_data_dir,model_path,ik_path)
 
-time_window = [0.02, 1.09] # rHS to rHS
-# time_window = [0, 1.10]
+# time_window = [0.02, 1.09] # rHS to rHS - opencap
+time_window = [.133, 1.23] # mocap 
 treadmill_speed = 0 # overground
 
 
     
 # %% Sub-example 1: walking simulation with torque-driven model.
 # Insert a string to "name" you case.
-case = 'test'
+case = 'case14'
 
 # Prepare inputs for dynamic simulation (this will be skipped if already done):
 #   - Download data from OpenCap database
