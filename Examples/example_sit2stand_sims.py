@@ -45,83 +45,87 @@
 '''
 
 # %% Select the example you want to run.
-runTorqueDrivenProblem = True
-runMuscleDrivenProblem = False
-runComparison = False
 
-# %% Directories, paths, and imports. You should not need to change anything.
+
+
+
+
+# % Directories, paths, and imports. You should not need to change anything.
 import os
 import sys
-baseDir = os.path.join(os.getcwd(), '..')
+import shutil
+current_file_path = os.path.abspath(__file__)
+current_folder = os.path.dirname(current_file_path)
+baseDir = os.path.dirname(current_folder)
 sys.path.append(baseDir)
 opensimADDir = os.path.join(baseDir, 'UtilsDynamicSimulations', 'OpenSimAD')
 sys.path.append(opensimADDir)
 
 from utilsOpenSimAD import processInputsOpenSimAD, plotResultsOpenSimAD, createOpenCapFolderStructure
 from mainOpenSimAD import run_tracking
-from utilsAuthentication import get_token
-from utilsProcessing import segment_gait
-from utils import get_trial_id, download_trial
-from utilsKineticsOpenSimAD import kineticsOpenSimAD
-from utilsPlotting import plot_dataframe
+from utilsProcessing import segment_STS
 
-# %% OpenCap authentication. Visit https://app.opencap.ai/login to create an
+# OpenCap authentication. Visit https://app.opencap.ai/login to create an
 # account if you don't have one yet.
 # get_token(saveEnvPath=os.getcwd())
 
-# %% Inputs common to both examples.
+# Outputs common to both examples.
 
-# Insert your session ID here. You can find the ID of all your sessions at
+# Insert your session ID   here. You can find the ID of all your sessions at
 # https://app.opencap.ai/sessions.
 # Visit https://app.opencap.ai/session/<session_id> to visualize the data of
 # your session.
 # Either opencap session id, or folder name with data
 # session_id = "4d5c3eb1-1a59-4ea1-9178-d3634610561c"
-session_id = 'OC_val_mocap'
 
-# Insert the name of the trial you want to simulate.
-trial_name = 'walking1'
 
-# Insert the type of activity you want to simulate. We have pre-defined settings
-# for different activities (more details above). Visit 
-# ./UtilsDynamicSimulations/OpenSimAD/settingsOpenSimAD.py to see all available
-# activities and their settings. If your activity is not in the list, select
-# 'other' to use generic settings or set your own settings.
-sim_setting_name = 'walking_periodic_grf_tracking'
+path_to_data = 'Y:/Users/EMiller/SitToStand_Sims/demo2/'
+ik_path = os.path.join(path_to_data, 'OpenSim', 'IK', 'shiftedIK', 'STS1_5_sync.mot') # Note this has to be a metadata file with the LaiUhlrich2022 model name
+metadata_path =  os.path.join(path_to_data, 'OpenSim', 'sessionMetadata.yaml')# this doesn't exist in your file structure, will need to add it somewhere
+model_path = os.path.join(path_to_data, 'OpenSim', 'Model', 'STS1_5', 'LaiUhlrich2022_scaled.osim')
+grf_path = None
 
-# GRF additions
-# get directory of this file
-this_file_dir = os.path.dirname(os.path.abspath(__file__))
-dataFolder = os.path.join(this_file_dir,'..','Data','GRF_tracking_data')
+# segment sts and get times for analysis
+STS_times = segment_STS(ik_path, pelvis_ty=None, timeVec=None, velSeated=0.3,
+               velStanding=0.15, visualize=False, filter_pelvis_ty=True, 
+               cutoff_frequency=4, delay=0.1)
+# this outputs a bunch of times for STS, for now just going to try running the 
+# first of them but should probably write a loop to run multiple of these here    
+time_window = STS_times[2][0]
+
+
+
+# edit this within loop to differentiate between sts trials
+session_id = 'subject2' + 'sit2stand_demo' # probably want to make this more specific for each subject/ s2s trial etc...
+trial_name = 'sit2stand_demo' # session id and trial name are all from the loop I had going originally to run the whole dataset, adapt as needed for your data
+dataFolder = os.path.join(path_to_data,'OpenSim', 'Simulations')
+if not os.path.exists(dataFolder):
+    os.mkdir(dataFolder)
 example_data_dir = os.path.join(dataFolder,session_id)
-
-model_path = os.path.join(example_data_dir,'LaiUhlrich2022_scaled.osim')
-ik_path = os.path.join(example_data_dir,'walking1.mot') # needs to be trialname.mot
-grf_path = os.path.join(example_data_dir,'walking1_forces.mot')
-createOpenCapFolderStructure(example_data_dir,model_path,ik_path)
-
-# time_window = [0.02, 1.09] # rHS to rHS - opencap
-time_window = [.133, 1.23] # mocap 
-treadmill_speed = 0 # overground
+if not os.path.exists(example_data_dir):
+    os.mkdir(example_data_dir)
+shutil.copy(metadata_path, example_data_dir)
 
 
-    
-# %% Sub-example 1: walking simulation with torque-driven model.
-# Insert a string to "name" you case.
-case = 'case14'
+createOpenCapFolderStructure(example_data_dir,model_path,ik_path,metadata_path, trial_name, grf_path)
 
+          
 # Prepare inputs for dynamic simulation (this will be skipped if already done):
 #   - Download data from OpenCap database
 #   - Adjust wrapping surfaces
 #   - Add foot-ground contacts
 #   - Generate external function (OpenSimAD)
+sim_setting_name = 'sit_to_stand' 
+treadmill_speed = 0 # overground
 settings = processInputsOpenSimAD(
     baseDir, dataFolder, session_id, trial_name, sim_setting_name, 
     time_window=time_window, treadmill_speed=treadmill_speed)
+
+case = 'case2' # Insert a string to "name" your case. This is useful when running 
+# multiple simulations on the same data but with different weights or conditions
 
 # Run the dynamic simulation.
 run_tracking(baseDir, dataFolder, session_id, settings, case=case)
 # Plot some results.
 plotResultsOpenSimAD(dataFolder, session_id, trial_name, settings, [case])
-
 test = 1
