@@ -34,18 +34,18 @@
 import os
 import sys
 
-baseDir = os.getcwd()
+baseDir = os.path.dirname(os.path.realpath(__file__))
 opensimADDir = os.path.join(baseDir, 'UtilsDynamicSimulations', 'OpenSimAD')
 sys.path.append(baseDir)
 sys.path.append(opensimADDir)
 
 from utilsOpenSimAD import processInputsOpenSimAD, plotResultsOpenSimAD
 from mainOpenSimAD import run_tracking
-from utils import get_trial_id, download_trial
+from utils import get_trial_id, download_trial, get_neutral_trial_id
 from utilsProcessing import segment_gait
 
 
-# %% User inputs.
+# % User inputs.
 '''
 Please provide:
     
@@ -161,15 +161,21 @@ dataFolder = os.path.join(baseDir, 'Data')
 
 session_type = 'treadmill' # Options are 'overground' and 'treadmill'.
 session_id = "2e440311-ac54-4c9e-8e5c-4e3cb85e8f6c"
-case = '0' # Change this to compare across settings.
+#session_id = "subject3"
+dataFolder = "C:\\Users\\MoBL3\\Documents\\GRF_Project\\opencap-processing-grf\\Data"
+case = '1' # Change this to compare across settings.
 trial_name = 'walking_baseline'
-motion_type = 'walking_periodic'
+motion_type = 'walking_periodic_grf_tracking'
 
 download_trial(get_trial_id(session_id,trial_name),
+               get_neutral_trial_id(session_id),
                    os.path.join(dataFolder,session_id),
-                   session_id=session_id)    
+                   session_id=session_id)
+    
+
+#%%
 time_window, gaitObject = segment_gait(
-    session_id, trial_name, dataFolder, gait_cycles_from_end=3)
+    session_id, trial_name, dataFolder, gait_cycles_from_end=0)
 treadmill_speed = gaitObject.treadmillSpeed
 
 

@@ -198,6 +198,7 @@ def get_motion_data(trial_id, session_path):
         if not os.path.exists(markerPath):
             markerURL = trial['results'][resultTags.index('marker_data')]['media']
             download_file(markerURL, markerPath)
+
     
     # IK data.
     if 'ik_results' in resultTags:
@@ -297,7 +298,7 @@ def download_kinematics(session_id, folder=None, trialNames=None):
         loadedTrialNames.append(trialDict['name'])
         
     # Remove 'calibration' and 'neutral' from loadedTrialNames.    
-    loadedTrialNames = [i for i in loadedTrialNames if i!='neutral' and i!='calibration']
+    #loadedTrialNames = [i for i in loadedTrialNames if i!='neutral' and i!='calibration']
         
     # Geometries.
     get_geometries(folder, modelName=modelName)
@@ -305,7 +306,7 @@ def download_kinematics(session_id, folder=None, trialNames=None):
     return loadedTrialNames, modelName
 
 # Download pertinent trial data.
-def download_trial(trial_id, folder, session_id=None):
+def download_trial(trial_id,neutral_id, folder, session_id=None):
     
     trial = get_trial_json(trial_id)
     if session_id is None:
@@ -318,6 +319,7 @@ def download_trial(trial_id, folder, session_id=None):
     
     # download trc and mot
     get_motion_data(trial_id,folder)
+    get_motion_data(neutral_id,folder) # EYM Edit for scaling for ML
     
     return trial['name']
 

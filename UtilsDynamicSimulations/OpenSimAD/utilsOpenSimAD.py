@@ -515,6 +515,23 @@ def getGRF_forTracking(storage_file,forceNames=None):
     
     return GRFs
 
+def getCOPx_forTracking(storage_file,forceNames=None):
+    # forceNames is a dict with ['r','l','suffix']
+    if forceNames is None:
+        forceNames = {'r':'R_ground_force',
+                      'l':'L_ground_force',
+                      'suffix':'_p'}
+    direction = ['x','y','z']
+
+    data = storage_to_numpy(storage_file)  
+    COPs = pd.DataFrame(data=data['time'], columns=['time'])
+    # loop over 'l' and 'r', looking for column forceNames + suffix + all 3 directions. Put them into grf_r_x, grf_r_y, grf_r_z, grf_l_x, grf_l_y, grf_l_z
+    for side in ['r','l']:
+        for d in direction:
+            COPs.insert(len( COPs.columns), 'COP_'+side+'_'+d, data[forceNames[side]+forceNames['suffix']+d])
+            
+    COPs = COPs.filter(regex=r'^(time|.*_x)$')
+    return  COPs
 
 # %% Get moment arm indices.
 def getMomentArmIndices(rightMuscles, leftPolynomialJoints,
@@ -549,7 +566,7 @@ def generateExternalFunction(
         baseDir, dataDir, subject, 
         OpenSimModel="LaiUhlrich2022",
         treadmill=False, build_externalFunction=True, verifyID=True, 
-        externalFunctionName='F', overwrite=False,
+        externalFunctionName='F', overwrite=True,
         useExpressionGraphFunction=True, contact_side='all'):
 
     # %% Process settings.
@@ -1812,6 +1829,9 @@ def buildExternalFunction(filename, pathDCAD, CPP_DIR, nInputs,
     path_external_filename_foo = os.path.join(BIN_DIR, fooName + '.py')
     if useExpressionGraphFunction:
         shutil.copy2(path_external_filename_foo, CPP_DIR)
+        destination_path = os.path.join(CPP_DIR, filename + '.py')
+        if os.path.exists(destination_path):
+            os.remove(destination_path)
         os.rename(os.path.join(CPP_DIR, fooName + '.py'), os.path.join(CPP_DIR, filename + '.py'))
 
     # %% Part 2: build external function (i.e., build .dll/.so/.dylib).
@@ -2304,7 +2324,7 @@ def plotResultsOpenSimAD(dataDir, subject, motion_filename, settings,
 def processInputsOpenSimAD(baseDir, dataFolder, session_id, trial_name,
                            motion_type, time_window=[], repetition=None,
                            treadmill_speed=0, contact_side='all',
-                           overwrite=False, useExpressionGraphFunction=True):
+                           overwrite=False, stiffness = 1000000, useExpressionGraphFunction=True):
         
     # Path session folder.
     sessionFolder =  os.path.join(dataFolder, session_id)
@@ -2331,15 +2351,15 @@ def processInputsOpenSimAD(baseDir, dataFolder, session_id, trial_name,
     # Prepare inputs for dynamic simulations.
     # Adjust muscle wrapping.    
     adjust_muscle_wrapping(baseDir, dataFolder, session_id,
-                         OpenSimModel=OpenSimModel, overwrite=overwrite)
+                         OpenSimModel=OpenSimModel, overwrite=True)
     # Add foot-ground contacts to musculoskeletal model.    
-    generate_model_with_contacts(dataFolder, session_id,
-                              OpenSimModel=OpenSimModel, overwrite=overwrite,
+    generate_model_with_contacts(stiffness, dataFolder, session_id,
+                              OpenSimModel=OpenSimModel, overwrite=True,
                               contact_side=contact_side)
     # Generate external function.    
     generateExternalFunction(baseDir, dataFolder, session_id,
                              OpenSimModel=OpenSimModel,
-                             overwrite=overwrite, 
+                             overwrite=True, 
                              treadmill=bool(treadmill_speed),
                              contact_side=contact_side,
                              useExpressionGraphFunction=useExpressionGraphFunction)
@@ -2427,7 +2447,7 @@ def adjustBoundsAndDummyMotion(polynomial_bounds, updated_bounds, pathDummyMotio
     
     return polynomial_bounds, pathAdjustedDummyMotion
 
-def createOpenCapFolderStructure(session_path,model_path_input,ik_path_input):
+def createOpenCapFolderStructure(session_path, model_path_input, ik_path_input, metadata_path, trial_name, grf_path_input=None):
     # create directories
     os.makedirs(session_path, exist_ok=True)
     osim_path = os.path.join(session_path, 'OpenSimData') 
@@ -2436,24 +2456,28 @@ def createOpenCapFolderStructure(session_path,model_path_input,ik_path_input):
     kinematics_path = os.path.join(osim_path, 'Kinematics')
     os.makedirs(model_path, exist_ok=True)
     os.makedirs(kinematics_path, exist_ok=True)
+    force_path = os.path.join(session_path, 'ForceData') 
+    os.makedirs(force_path, exist_ok=True)
     
-    # get directory above this script
-    pathMain = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     
-    # if metadata doesn't exist, copy it from one folder above where this file is, then GRF_tracking, sessionMetadata_generic.yaml
-    if not os.path.exists(os.path.join(session_path, 'sessionMetadata.yaml')):
-        shutil.copy2(os.path.join(pathMain, 'GRF_tracking', 'sessionMetadata_generic.yaml'),
-                      os.path.join(session_path, 'sessionMetadata.yaml'))
+    # if metadata doesn't exist, copy it from one folder above where this file is
+    shutil.copy2(metadata_path,
+                  os.path.join(session_path, 'sessionMetadata.yaml'))
 
     # get the model file name
     model_filename = os.path.basename(model_path_input)
     # copy model from model_path to where it goes in folder structure
-    shutil.copy2(model_path_input,os.path.join(model_path,model_filename))
+    shutil.copy2(model_path_input, os.path.join(model_path, model_filename))
 
     # get the kinematics file name
-    ik_filename = os.path.basename(ik_path_input)
+    ik_filename = trial_name + '.mot'
     # copy kinematics from ik_path to where it goes in folder structure
-    shutil.copy2(ik_path_input,os.path.join(kinematics_path,ik_filename))
+    shutil.copy2(ik_path_input, os.path.join(kinematics_path, ik_filename))
+    
+    # Handle GRF data if provided
+    if grf_path_input:
+        force_filename = trial_name + '_forces.mot'
+        shutil.copy2(grf_path_input, os.path.join(force_path, force_filename))
 
     return
 

@@ -203,3 +203,153 @@ def normSumWeightedSqrDiff(dim):
     f_normSumSqrDiff = ca.Function('f_normSumSqrDiff', [x, x_ref, w], [nSD])
     
     return f_normSumSqrDiff
+
+
+
+def derivativeSumOfNegatives(dim1, dim2):
+    """
+    Computes a weighted squared sum of negative derivatives along columns.
+    
+    Args:
+        dim1 (int): Number of rows (e.g., 52 for time steps).
+        dim2 (int): Number of columns (e.g., 3 for COP data).
+    
+    Returns:
+        casadi.Function: A function that computes the weighted squared sum.
+    """
+    # Function variables
+    x = ca.SX.sym('x', dim1, dim2)  # Input matrix (dim1 x dim2)
+    w = ca.SX.sym('w', dim2, 1)  # Weight vector (dim2 x 1)
+
+    # Compute finite differences along columns (derivative)
+    derivative = x[1:, :] - x[:-1, :]  # (dim1-1 x dim2)
+
+    # **Very large penalty for non-increasing values**
+    non_increasing_penalty = (ca.sum1(ca.fabs(ca.fmin(derivative, 0)))**2)*100
+   # **Extreme penalty for non-increasing values**
+    #non_increasing_penalty = ca.if_else(derivative < 0, ca.exp(-10 * derivative), 0)  # Large multiplier
+
+    # **Final weighted penalty**
+    weighted_penalty = ca.mtimes(non_increasing_penalty, w)
+
+    # Create CasADi function
+    f_derivativeSumOfNegatives = ca.Function('f_derivativeSumOfNegatives', [x, w], [weighted_penalty])
+    return f_derivativeSumOfNegatives
+
+
+
+def totalVariationGradientPenalty(dim1, dim2):
+    """
+    Computes a penalty based on Total Variation Regularization (TVR) and Gradient Matching.
+
+    Args:
+        dim1 (int): Number of rows (e.g., 52 for time steps).
+        dim2 (int): Number of columns (e.g., 3 for data dimensions).
+
+    Returns:
+        casadi.Function: A function that computes the combined penalty.
+    """
+    # Define symbolic variables
+    x = ca.SX.sym('x', dim1, dim2)  # Input matrix (dim1 x dim2)
+    w = ca.SX.sym('w', dim2, 1)  # Weight vector (dim2 x 1)
+    
+    # Compute finite differences (gradients) along columns
+    derivative = x[1:, :] - x[:-1, :]  # Shape: (dim1-1, dim2)
+
+    # **Total Variation Regularization (TVR)**
+    tv_penalty = ca.sum1(ca.fabs(derivative))  # L1 norm of gradient differences
+
+    # **Gradient Matching Penalty (encourages smooth progression)**
+    median_step = ca.median(derivative)  # Compute median step size
+    gradient_penalty = ca.sumsqr(derivative - median_step)  # Penalize deviations
+
+    # **Final weighted penalty**
+    total_penalty = ca.mtimes((tv_penalty + gradient_penalty), w)
+
+    # Create CasADi function
+    f_totalVariationGradientPenalty = ca.Function('f_totalVariationGradientPenalty', [x, w], [total_penalty])
+    return f_totalVariationGradientPenalty
+
+
+def doubleDerivativeSquare(dim1, dim2):
+    """
+    Computes a penalty based on Total Variation Regularization (TVR) and Gradient Matching.
+
+    Args:
+        dim1 (int): Number of rows (e.g., 52 for time steps).
+        dim2 (int): Number of columns (e.g., 3 for data dimensions).
+
+    Returns:
+        casadi.Function: A function that computes the combined penalty.
+    """
+    # Define symbolic variables
+    x = ca.SX.sym('x', dim1, dim2)  # Input matrix (dim1 x dim2)
+    w = ca.SX.sym('w', dim2, 1)  # Weight vector (dim2 x 1)
+    
+    # Compute finite differences (gradients) along columns
+    derivative = x[1:, :] - x[:-1, :]  # Shape: (dim1-1, dim2)
+    
+    # Compute finite differences (gradients) along columns
+    derivative2 = derivative[1:, :] - derivative[:-1, :]  # Shape: (dim1-1, dim2)
+    derivative_penalty = (ca.sum1(ca.fmax(ca.fabs(derivative2), 0.01))**2)
+
+    # derivative_penalty = (ca.sum1(ca.fmax(ca.fabs(derivative), 0.01))**2)
+
+
+
+    # **Final weighted penalty**
+    total_penalty = ca.mtimes(derivative_penalty, w)
+
+    # Create CasADi function
+    f_totalVariationGradientPenalty = ca.Function('f_totalVariationGradientPenalty', [x, w], [total_penalty])
+    return f_totalVariationGradientPenalty
+
+
+
+
+
+def getCOP_casadi(N):
+    """
+    CasADi version of the getCOP function.
+    Computes the Center of Pressure (COP) from Ground Reaction Forces (GRF) and Moments (GRM).
+    
+    Args:
+        N (int): The number of time steps (columns of GRF and GRM).
+    
+    Returns:
+        casadi.Function: A function that takes GRF and GRM as inputs and returns COP for all time steps.
+    """
+    # Define symbolic inputs (3xN matrices for GRF and GRM)
+    GRF = ca.SX.sym('GRF', 3, N)  # 3xN matrix
+    GRM = ca.SX.sym('GRM', 3, N)  # 3xN matrix
+
+    # Initialize COP as symbolic variable (3xN matrix)
+    COP = ca.SX.zeros(3, N)  # Create a 3xN matrix for COP
+
+    # Loop over each time step and compute COP
+    for k in range(N):  # Loop over N time steps # edit this to be just a mask
+        COP[0, k] = ca.if_else(GRF[1, k] > 0.001, GRM[2, k] / GRF[1, k], 0)  # COP_x
+        COP[2, k] = ca.if_else(GRF[1, k] > 0.001, -GRM[0, k] / GRF[1, k], 0)  # COP_z
+
+    # Create CasADi function to evaluate COP for all time steps
+    f_getCOP = ca.Function('f_getCOP', [GRF, GRM], [COP])
+
+    return f_getCOP
+
+
+
+def calculate_rmse_casadi(dim):
+    
+    # Function variables
+    Mocap_R = ca.SX.sym('Mocap_R', dim, 1)
+    X_COP = ca.SX.sym('X_COP', dim, 1)
+    
+    # Calculate RMSE
+    rmse_r = ca.sqrt(ca.sumsqr(Mocap_R - X_COP) / dim)
+    
+    # Create CasADi function
+    f_rmse = ca.Function('f_COP_rmse', [Mocap_R, X_COP], [rmse_r])
+    
+    return f_rmse
+
+
