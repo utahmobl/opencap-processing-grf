@@ -293,6 +293,8 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
     if 'foot_torque_actuator' in settings and settings['weights']['foot_torque_actuator'] > 0:
         foot_torque_actuator = True
         foot_torque_names = ['torque_r_x', 'torque_r_z', 'torque_l_x', 'torque_l_z']
+        # default weight 1
+        w_foot_torque_actuator = np.ones((4,))
         if 'all' in settings['foot_torque_actuator']:
             w_foot_torque_actuator = settings['foot_torque_actuator']['all']['weight']*np.ones((4,))
         else:
