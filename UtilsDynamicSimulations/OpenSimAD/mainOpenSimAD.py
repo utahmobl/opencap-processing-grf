@@ -241,6 +241,23 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
         if 'cutoff_freq_grfs' in settings:
             cutoff_freq_grfs = settings['cutoff_freq_grfs']
 
+    # Include a torque actuator between ground and foot to help tracking of COP
+    foot_torque_actuator = False
+    w_torque_actuator = np.zeros((2,))
+    if 'foot_torque_actuator' in settings and settings['weights']['foot_torque_actuator'] > 0:
+        foot_torque_actuator = True
+        foot_torques = ['torque_r_x', 'torque_r_z', 'torque_l_x', 'torque_l_z']
+        w_torque_actuator[0] = settings['foot_torque_actuator']['x']['weight']
+        w_torque_actuator[1] = settings['foot_torque_actuator']['z']['weight']
+        if 'all' in settings['foot_torque_actuator']:
+            w_torque_actuator = settings['foot_torque_actuator']['all']['weight']*np.ones((2,))
+        else:
+            if 'x' in settings['foot_torque_actuator']:
+                w_torque_actuator[0] = settings['foot_torque_actuator']['x']['weight']
+            if 'z' in settings['foot_torque_actuator']:
+                w_torque_actuator[1] = settings['foot_torque_actuator']['z']['weight']
+    
+
     # Allow residuals - only makes sense when tracking grfs
     allowPelvisResiduals = False
     if 'allowPelvisResiduals' in settings:
@@ -1031,6 +1048,8 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
         f_nLumbarJointsSum2 = normSumSqr(nLumbarJoints)
     if torque_driven_model:
         f_nCoordinatesSum2 = normSumSqr(nMuscleDrivenJoints)
+    if foot_torque_actuator:
+        f_footTorqueActuator2 = normSumSqr(2)
     f_diffTorques = diffTorques()  
     
     # %% OPTIMAL CONTROL PROBLEM FORMULATION
@@ -1136,7 +1155,16 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
             uw['rAct'][c_j], lw['rAct'][c_j], scaling['rAct'][c_j] = (
                 bounds.getBoundsReserveActuators(c_j, reserveActuatorCoordinates[c_j]))
             uw['rActk'][c_j] = ca.vec(uw['rAct'][c_j].to_numpy().T * np.ones((1, N))).full()
-            lw['rActk'][c_j] = ca.vec(lw['rAct'][c_j].to_numpy().T * np.ones((1, N))).full()                
+            lw['rActk'][c_j] = ca.vec(lw['rAct'][c_j].to_numpy().T * np.ones((1, N))).full()      
+    # Foot torque actuators.
+    if foot_torque_actuator:
+        # uw['FootTorque'], lw['FootTorque'], scaling['FootTorque'] = bounds.getBoundsFootTorqueActuator()
+        # TODO : This should be put in the bounds class 
+        # 1x4 dataframe with the bounds for each foot torque actuator.
+        uw['FootTorque'] = pd.DataFrame(300, index=[0], columns=['r_x', 'r_z', 'l_x', 'l_z'])
+        lw['FootTorque'] = pd.DataFrame(-300, index=[0], columns=['r_x', 'r_z', 'l_x', 'l_z'])  
+        uw['FootTorquek'] = ca.vec(uw['FootTorque'].to_numpy().T * np.ones((1, N))).full()
+        lw['FootTorquek'] = ca.vec(lw['FootTorque'].to_numpy().T * np.ones((1, N))).full()
     # Static parameters.
     if offset_ty:
         scaling['Offset'] = 1.         
@@ -1198,6 +1226,14 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
         w0['rAct'] = {}
         for c_j in reserveActuatorCoordinates:
             w0['rAct'][c_j] = guess.getGuessReserveActuators(c_j)
+    if foot_torque_actuator:
+        # Foot torque actuators.
+        # TODO IMPLEMENT THIS CORRECTLY
+        guessTorque = pd.DataFrame()
+        guessTorque = ([0] * N)  
+        for torque in foot_torques:
+            w0['FootTorque'][torque] = guessTorque
+
     # Static parameters.
     if offset_ty:
         w0['Offset'] = guess.getGuessOffset(scaling['Offset'])
@@ -1517,6 +1553,13 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
                 opti.set_initial(rAct[c_j], w0['rAct'][c_j].to_numpy().T)
                 assert np.all(lw['rActk'][c_j] <= ca.vec(w0['rAct'][c_j].to_numpy().T).full()), "Issue with lower bound reserve actuators"
                 assert np.all(uw['rActk'][c_j] >= ca.vec(w0['rAct'][c_j].to_numpy().T).full()), "Issue with upper bound reserve actuators"
+        # Foot torque actuators.
+        if foot_torque_actuator:
+            footTorque = opti.variable(foot_torques.shape[0], N)
+            opti.subject_to(opti.bounded(lw['FootTorquek'], ca.vec(footTorque), uw['FootTorquek']))
+            opti.set_initial(footTorque, w0['FootTorque'].to_numpy().T)
+            assert np.all(lw['FootTorquek'] <= ca.vec(w0['FootTorque'].to_numpy().T).full()), "Issue with lower bound foot torque actuators"
+            assert np.all(uw['FootTorquek'] >= ca.vec(w0['FootTorque'].to_numpy().T).full()), "Issue with upper bound foot torque actuators"
             
         # %% Plots initial guess vs bounds.
         plotGuessVsBounds = False
@@ -2072,6 +2115,10 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
                     np.reshape(w_opt[starti:starti+1*(N)], (N, 1))).T
                 starti = starti + 1*(N)
         assert (starti == w_opt.shape[0]), "error when extracting results"
+        if foot_torque_actuator:
+            footTorque_opt = (
+                np.reshape(w_opt[starti:starti+4*N], (N, 4))).T
+            starti = starti + footTorqueJoints*N
         
         # %% Visualize results against bounds.
         visualizeResultsBounds = False
@@ -2202,6 +2249,15 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
         for c_s, side in enumerate(contactSides):
             GRF_all_opt[side] = F_out_pp[idxGR['GRF']['all'][side], :]
             GRM_all_opt[side] = F_out_pp[idxGR['GRM']['all'][side], :]
+
+            # TODO DELETE THIS ONCE WE PUT THE TORQUE ACTUATOR INTO F.cpp
+            # add extra foot torque to COP computation
+            footTorque = np.zeros((3, N))
+            footTorque[0,:] = footTorque[c_s*2,:].to_numpy()
+            footTorque[2,:] = footTorque[c_s*2+1,:].to_numpy()
+            GRM_all_opt[side] += footTorque
+            # # END TODO
+            
             COP_all_opt[side], freeT_all_opt[side] = getCOP(
                 GRF_all_opt[side], GRM_all_opt[side])
             GRF_all_opt['all'][c_s*3:(c_s+1)*3, :] = GRF_all_opt[side]
