@@ -64,6 +64,8 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
         weights['copTrackingTerm'] = settings['weights']['copTrackingTerm']
     if 'pelvisResidualsTerm' in settings['weights']:
         weights['pelvisResidualsTerm'] = settings['weights']['pelvisResidualsTerm']
+    if 'foot_torque_actuator' in settings['weights']:
+        weights['foot_torque_actuator'] = settings['weights']['foot_torque_actuator']
     
     # Model info.
     # Model name.
@@ -287,19 +289,17 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
 
     # Include a torque actuator between ground and foot to help tracking of COP
     foot_torque_actuator = False
-    w_torque_actuator = np.zeros((2,))
+    w_torque_actuator = np.zeros((4,))
     if 'foot_torque_actuator' in settings and settings['weights']['foot_torque_actuator'] > 0:
         foot_torque_actuator = True
-        foot_torques = ['torque_r_x', 'torque_r_z', 'torque_l_x', 'torque_l_z']
-        w_torque_actuator[0] = settings['foot_torque_actuator']['x']['weight']
-        w_torque_actuator[1] = settings['foot_torque_actuator']['z']['weight']
+        foot_torque_names = ['torque_r_x', 'torque_r_z', 'torque_l_x', 'torque_l_z']
         if 'all' in settings['foot_torque_actuator']:
-            w_torque_actuator = settings['foot_torque_actuator']['all']['weight']*np.ones((2,))
+            w_foot_torque_actuator = settings['foot_torque_actuator']['all']['weight']*np.ones((4,))
         else:
             if 'x' in settings['foot_torque_actuator']:
-                w_torque_actuator[0] = settings['foot_torque_actuator']['x']['weight']
+                w_foot_torque_actuator[[0,2]] = settings['foot_torque_actuator']['x']['weight']
             if 'z' in settings['foot_torque_actuator']:
-                w_torque_actuator[1] = settings['foot_torque_actuator']['z']['weight']
+                w_foot_torque_actuator[[1,3]] = settings['foot_torque_actuator']['z']['weight']
     
 
     # Allow residuals - only makes sense when tracking grfs
@@ -1132,7 +1132,7 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
     if torque_driven_model:
         f_nCoordinatesSum2 = normSumSqr(nMuscleDrivenJoints)
     if foot_torque_actuator:
-        f_footTorqueActuator2 = normSumSqr(2)
+        f_footTorqueActuator2 = normSumSqr(4)
     f_diffTorques = diffTorques()  
     
     # %% OPTIMAL CONTROL PROBLEM FORMULATION
@@ -1314,7 +1314,7 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
         # TODO IMPLEMENT THIS CORRECTLY
         guessTorque = pd.DataFrame()
         guessTorque = ([0] * N)  
-        for torque in foot_torques:
+        for torque in foot_torque_names:
             w0['FootTorque'][torque] = guessTorque
 
     # Static parameters.
@@ -1638,7 +1638,7 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
                 assert np.all(uw['rActk'][c_j] >= ca.vec(w0['rAct'][c_j].to_numpy().T).full()), "Issue with upper bound reserve actuators"
         # Foot torque actuators.
         if foot_torque_actuator:
-            footTorque = opti.variable(foot_torques.shape[0], N)
+            footTorque = opti.variable(foot_torque_names.shape[0], N)
             opti.subject_to(opti.bounded(lw['FootTorquek'], ca.vec(footTorque), uw['FootTorquek']))
             opti.set_initial(footTorque, w0['FootTorque'].to_numpy().T)
             assert np.all(lw['FootTorquek'] <= ca.vec(w0['FootTorque'].to_numpy().T).full()), "Issue with lower bound foot torque actuators"
@@ -1939,15 +1939,25 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
                     Mocap_L = ca.MX(Mocap_Cops['l'][k])
                     
                     for leg in ['r', 'l']:
-                        # Extract symbolic GRF and GRM over all N time points
+                        # Extract GRF and GRM over all N time points
+                        # TODO SDU:? Isn't Tk just this timestep??
                         GRF_leg = Tk[idx_grf_forCOP[leg], 0]  # (3×N) Ground Reaction Force
                         GRM_leg = Tk[idx_grm_forCOP[leg], 0]  # (3×N) Ground Reaction Moment
-                        
-                        # Compute symbolic COP for all N time steps (once per leg)
+
+                        # TODO DELETE THIS WHEN WE ADD TO F.cpp
+                        if leg == 'r':
+                            GRM_leg[0] += footTorque[0, k] # only x moment implemented here
+                            GRM_leg[2] += footTorque[1, k] # only z moment implemented here
+                        if leg == 'l':
+                            GRM_leg[0] += footTorque[2, k]
+                            GRM_leg[2] += footTorque[3, k]
+                            
+                        # Compute COP for all N time steps (once per leg)
                         COP_leg = f_getCOP(GRF_leg, GRM_leg)  # (3×N) Center of Pressure
                         
                         # Transpose COP_leg to match the expected input dimensions (3×N)
                         COP_leg = COP_leg.T  # Now COP_leg is (3, N)
+
                         X_COP = COP_leg[:,0]
                         if leg == 'r':
                             copTrackingTerm = f_COP_rmse(Mocap_R, X_COP)
@@ -2061,6 +2071,12 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
                         Tk[idxGroundPelvisJointsinF, 0], w_pelvis_residuals)
                     J += (weights['pelvisResidualsTerm'] * 
                           pelvisResidualsTerm * h * B[j + 1])
+                    
+                if foot_torque_actuator and weights['foot_torque_actuator'] > 0:
+                    footTorqueTerm = f_footTorqueActuator2(
+                        footTorque[:, k], w_foot_torque_actuator)
+                    J += (weights['foot_torque_actuator'] * 
+                          footTorqueTerm * h * B[j + 1])
                         
 
                     
@@ -2348,7 +2364,7 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
         if foot_torque_actuator:
             footTorque_opt = (
                 np.reshape(w_opt[starti:starti+4*N], (N, 4))).T
-            starti = starti + footTorqueJoints*N
+            starti = starti + foot_torque_names.shape[0]*N
         
         # %% Visualize results against bounds.
         visualizeResultsBounds = False
@@ -2839,7 +2855,15 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
                             vGRF_rear_opt += GRF_s_opt[side][contactSpheres[side][idx_rear_sphere]][1,k]
                         vGRF_ratio_opt = np.sqrt(vGRF_front_opt/vGRF_rear_opt) 
                         vGRFRatioTerm_opt_all += (weights['vGRFRatioTerm'] * vGRF_ratio_opt * h * B[j + 1])                    
-                
+                if foot_torque_actuator:
+                    footTorqueTerm = f_footTorqueActuator2(
+                        footTorque_opt[:, k], w_foot_torque_actuator)
+                    footTorqueActuatorTerm_opt_all = (weights['foot_torque_actuator'] * 
+                          footTorqueTerm * h * B[j + 1])
+
+
+
+        # %% Compute the cost function.
         # "Motor control" terms.
         if torque_driven_model:
             JMotor_opt = coordExcitationTerm_opt_all.full()
@@ -2856,6 +2880,8 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
             JMotor_opt += vGRFRatioTerm_opt_all
         if withReserveActuators:    
             JMotor_opt += reserveActuatorTerm_opt_all
+        if foot_torque_actuator:
+            JMotor_opt += footTorqueActuatorTerm_opt_all
         # Tracking terms.
         JTrack_opt = (positionTrackingTerm_opt_all.full() +  
                       velocityTrackingTerm_opt_all.full())
