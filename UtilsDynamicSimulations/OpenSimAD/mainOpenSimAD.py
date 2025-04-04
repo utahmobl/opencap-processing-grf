@@ -2500,10 +2500,8 @@ def run_tracking(baseDir, dataDir, subject, settings, case='0',
 
             # TODO DELETE THIS ONCE WE PUT THE TORQUE ACTUATOR INTO F.cpp
             # add extra foot torque to COP computation
-            footTorque = np.zeros((3, N))
-            footTorque[0,:] = footTorque[c_s*2,:].to_numpy()
-            footTorque[2,:] = footTorque[c_s*2+1,:].to_numpy()
-            GRM_all_opt[side] += footTorque
+            GRM_all_opt[side][0,:] += footTorque[c_s*2,:].to_numpy()
+            GRM_all_opt[side][2,:] += footTorque[c_s*2+1,:].to_numpy()
             # # END TODO
             
             COP_all_opt[side], freeT_all_opt[side] = getCOP(
