@@ -566,8 +566,9 @@ def generateExternalFunction(
         baseDir, dataDir, subject, 
         OpenSimModel="LaiUhlrich2022",
         treadmill=False, build_externalFunction=True, verifyID=True, 
-        externalFunctionName='F', overwrite=True,
-        useExpressionGraphFunction=True, contact_side='all'):
+        externalFunctionName='F', overwrite=True, 
+        useExpressionGraphFunction=True, contact_side='all',
+        F_testing = True): # EYM_edit for testing
 
     # %% Process settings.
     pathCWD = os.getcwd()
@@ -587,6 +588,9 @@ def generateExternalFunction(
         externalFunctionName += '_treadmill'
     if contact_side != 'all':
         externalFunctionName += '_' + contact_side
+    if F_testing:
+        externalFunctionName += '_test'
+        
     pathOutputFile = os.path.join(pathOutputExternalFunctionFolder, 
                                   externalFunctionName + ".cpp")
     pathOutputMap = os.path.join(pathOutputExternalFunctionFolder, 
@@ -680,7 +684,7 @@ def generateExternalFunction(
         f.write('using namespace SimTK;\n')
         f.write('using namespace OpenSim;\n\n')
     
-        if treadmill:
+        if treadmill or F_testing:
             f.write('constexpr int n_in = 3; \n')
         else:
             f.write('constexpr int n_in = 2; \n')
@@ -1277,6 +1281,9 @@ def generateExternalFunction(
         f.write('\tstd::vector<T> u(arg[1], arg[1] + NU);\n')
         if treadmill:
             f.write('\tstd::vector<T> p(arg[2], arg[2] + 1);\n')
+        if F_testing:
+            f.write('\t// Read in foot torque input.\n')
+            f.write('\tstd::vector<T> footTorque(arg[2], arg[2] + 4); // [R_x, R_z, L_x, L_z]\n')  # 2 torques (x and z) per foot
         f.write('\n')
         
         f.write('\t// States and controls.\n')
@@ -1355,6 +1362,21 @@ def generateExternalFunction(
                 f.write('\tappliedBodyForces[c_idx_%s] += GRF_%s;\n' % (str(count), str(count)))
                 count += 1
                 f.write('\n')
+                
+        
+        if F_testing:
+            f.write('\t/// Insert foot torques.\n')
+            f.write('\tSpatialVec torque_r, torque_l;\n')
+            f.write('\ttorque_r[0] = Vec3(0);\n')
+            f.write('\ttorque_r[1] = Vec3(footTorque[0], 0, footTorque[1]);  // Right foot x and z\n')
+            f.write('\ttorque_l[0] = Vec3(0);\n')
+            f.write('\ttorque_l[1] = Vec3(footTorque[2], 0, footTorque[3]);  // Left foot x and z\n')
+            f.write('\n')
+            f.write('\tint c_idx_r = model->getBodySet().get("calcn_r").getMobilizedBodyIndex();\n')
+            f.write('\tint c_idx_l = model->getBodySet().get("calcn_l").getMobilizedBodyIndex();\n')
+            f.write('\tappliedBodyForces[c_idx_r] += torque_r;\n')
+            f.write('\tappliedBodyForces[c_idx_l] += torque_l;\n')
+            f.write('\n')
                 
         f.write('\t/// knownUdot.\n')
         if treadmill:
@@ -1443,6 +1465,18 @@ def generateExternalFunction(
                     raise ValueError("Cannot identify contact side")
                 f.write('\n')                   
                 count += 1
+        
+        
+        if F_testing:
+            f.write('\t/// Add actuator torques to GRMs\n')
+            f.write('\tVec3 footTorque_r(footTorque[0], 0, footTorque[1]);  // Right foot x, z torque\n')  
+            f.write('\tVec3 footTorque_l(footTorque[2], 0, footTorque[3]);  // Left foot x, z torque\n') 
+            f.write('\tGRM_r += footTorque_r;\n') 
+            f.write('\tGRM_l += footTorque_l;\n') 
+            f.write('\n') 
+        
+        
+        
         
         # Save dict pointing to which elements are returned by F and in which
         # order, such as to facilitate using F when formulating problem.
@@ -1554,13 +1588,18 @@ def generateExternalFunction(
         f.write('\tRecorder x[NX];\n')
         f.write('\tRecorder u[NU];\n')
         if treadmill:
-            f.write('\tRecorder p[1];\n')            
+            f.write('\tRecorder p[1];\n') 
+        elif F_testing:
+            f.write('\tRecorder footTorque[4];\n')
         f.write('\tRecorder tau[NR];\n')
         f.write('\tfor (int i = 0; i < NX; ++i) x[i] <<= 0;\n')
         f.write('\tfor (int i = 0; i < NU; ++i) u[i] <<= 0;\n')
         if treadmill:
             f.write('\tp[0] <<= 0;\n')
             f.write('\tconst Recorder* Recorder_arg[n_in] = { x,u,p };\n')
+        elif F_testing:
+            f.write('\tfor (int i = 0; i < 4; ++i) footTorque[i] <<= 0;\n')  # INIT TORQUES
+            f.write('\tconst Recorder* Recorder_arg[n_in] = { x,u,footTorque };\n')
         else:
             f.write('\tconst Recorder* Recorder_arg[n_in] = { x,u };\n')
         f.write('\tRecorder* Recorder_res[n_out] = { tau };\n')
@@ -1641,6 +1680,9 @@ def generateExternalFunction(
         if treadmill:
             vec4 = np.zeros((1, 1))
             vec3 = np.concatenate((vec1,vec2,vec4))
+        elif F_testing:
+            vec4 = np.zeros((4, 1))
+            vec3 = np.concatenate((vec1,vec2,vec4))
         else:            
             vec3 = np.concatenate((vec1,vec2))
 
@@ -1709,7 +1751,8 @@ def getF_expressingGraph(dim, script_name):
 
 # %% Compile external function.
 def buildExternalFunction(filename, pathDCAD, CPP_DIR, nInputs,
-                          treadmill=False, useExpressionGraphFunction=True):       
+                          treadmill=False, useExpressionGraphFunction=True,
+                          F_testing = True):       
     
     # %% Part 1: build expression graph (i.e., generate foo.py).
     pathMain = os.getcwd()
@@ -1846,10 +1889,16 @@ def buildExternalFunction(filename, pathDCAD, CPP_DIR, nInputs,
         sys.path.append(pathBuildExternalFunction)
         os.chdir(pathBuildExternalFunction)
         
-        if treadmill:
-            generateF(nInputs+1, fooName)
+        if treadmill and F_testing:
+            # Trigger error message
+            raise ValueError("Error: treadmill and F_testing cannot both be True.")
         else:
-            generateF(nInputs, fooName)
+            if treadmill:
+                generateF(nInputs+1, fooName)
+            elif F_testing:
+                generateF(nInputs+1, fooName)
+            else:
+                generateF(nInputs, fooName)
         
         if os_system == 'Windows':
             cmd3 = 'cmake "' + pathBuildExternalFunction + '" -G "' + preferred_generator + '" -A x64 -DTARGET_NAME:STRING="' + filename + '" -DINSTALL_DIR:PATH="' + path_external_functions_filename_install + '"'

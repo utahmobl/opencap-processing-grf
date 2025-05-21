@@ -27,6 +27,96 @@
 def get_setup(motion_type):
 
     setups = {}   
+    
+    setups['walking_nonperiodic_cop_tracking_MD'] = {
+         'ipopt_tolerance': 3,
+         'weights': {
+             'positionTrackingTerm': 1000,
+             'velocityTrackingTerm': 100,
+             'accelerationTrackingTerm': .1, #zero this
+             'grfTrackingTerm': 0.001,
+             'copAccelerationTerm': 0.001,
+             'copTrackingTerm': 0.001,
+             'copMonotonicTerm': 0.001,
+             'contrainCOPX_to_footMarkers': 0.001,
+             'pelvisResidualsTerm': 0.001, # make this cheap
+             'activationTerm': 100, #make this cheap, maybe
+             'coordinateExcitationTerm': 10, # make this cheap, and figure out what it does
+             'armExcitationTerm': 0.001,
+             'lumbarExcitationTerm': 0.001,
+             'jointAccelerationTerm': 0.001, # turn this off
+             'activationDtTerm': 0.001,
+             'forceDtTerm': 0.001,
+             'footTorqueTerm': 0.001},     # get rid of this in weights        
+         'coordinates_toTrack': {
+             'pelvis_tilt': {"weight": 10},
+             'pelvis_list': {"weight": 10},
+             'pelvis_rotation': {"weight": 10},
+             'pelvis_tx': {"weight": 5},
+             'pelvis_ty': {"weight": 5},
+             'pelvis_tz': {"weight": 5}, 
+             'hip_flexion_l': {"weight": 10},
+             'hip_adduction_l': {"weight": 10},
+             'hip_rotation_l': {"weight": 10},
+             'hip_flexion_r': {"weight": 10},
+             'hip_adduction_r': {"weight": 10},
+             'hip_rotation_r': {"weight": 10},
+             'knee_angle_l': {"weight": 10},
+             'knee_angle_r': {"weight": 10},
+             'ankle_angle_l': {"weight": 10},
+             'ankle_angle_r': {"weight": 10},
+             'subtalar_angle_l': {"weight": 5},
+             'subtalar_angle_r': {"weight": 5},
+             'lumbar_extension': {"weight": 10}, # reduce weight?
+             'lumbar_bending': {"weight": 10},
+             'lumbar_rotation': {"weight": 10},
+             'arm_flex_l': {"weight": 10},
+             'arm_add_l': {"weight": 10},
+             'arm_rot_l': {"weight": 10},
+             'arm_flex_r': {"weight": 10},
+             'arm_add_r': {"weight": 10},
+             'arm_rot_r': {"weight": 10},
+             'elbow_flex_l': {"weight": 10},
+             'elbow_flex_r': {"weight": 10},
+             'pro_sup_l': {"weight": 10},
+             'pro_sup_r': {"weight": 10}},
+         'grfs_toTrack': {
+             'all': {"weight": 10}}, 
+         'CoP_mask': {
+             'right': range(0,100),
+             'left': range(0,100)},
+         'Stance_Precentage': {
+             'right': range(0,100),
+             'left': range(0,100)},
+         'input_times': range(0,100),
+         'pelvisResiduals_toTrack': {
+             'pelvis_tx': {"weight": 1},
+             'pelvis_ty': {"weight": 1},
+             'pelvis_tz': {"weight": 1},
+             'pelvis_tilt': {"weight": 100},
+             'pelvis_list': {"weight": 100},
+             'pelvis_rotation': {"weight": 100}},
+         'filter_grfs_toTrack': True,
+         'cutoff_freq_grfs': 6,
+         'filter_cops_toTrack': False,
+         'cutoff_freq_cops': 30,
+         'allowPelvisResiduals': True,        
+         'coordinate_constraints': {
+             'pelvis_ty': {"env_bound": 0.1},
+             'pelvis_tx': {"env_bound": 0.1}},
+         'enableLimitTorques': True,
+         'filter_Qs_toTrack': True,
+         'cutoff_freq_Qs': 6,
+         'filter_Qds_toTrack': True,
+         'cutoff_freq_Qds': 6,
+         'filter_Qdds_toTrack': True,
+         'cutoff_freq_Qdds': 6,
+         'splineQds': True,
+         'torque_driven_model': False,
+         'foot_torque_actuator': True,
+         'meshDensity': 50} # TODO RETURN TO 100
+    
+    
     setups['other'] = {
         'ipopt_tolerance': 3,
         'weights': {
@@ -1004,86 +1094,7 @@ def get_setup(motion_type):
         'torque_driven_model': False,
         'meshDensity': 50} # TODO RETURN TO 100
     
-    setups['walking_nonperiodic_cop_tracking_MD'] = {
-         'ipopt_tolerance': 1,
-         'weights': {
-             'positionTrackingTerm': 1000,
-             'velocityTrackingTerm': 100,
-             'accelerationTrackingTerm': .1,
-             'grfTrackingTerm': 0,
-             'copMonotonicTerm': 0.001,
-             'copTrackingTerm': 0.001,
-             'pelvisResidualsTerm': 0,
-             'activationTerm': 100,
-             'coordinateExcitationTerm': 10, 
-             'armExcitationTerm': 0.001,
-             'lumbarExcitationTerm': 0.001,
-             'jointAccelerationTerm': 0.001,
-             'activationDtTerm': 0.001,
-             'forceDtTerm': 0.001},            
-         'coordinates_toTrack': {
-             'pelvis_tilt': {"weight": 10},
-             'pelvis_list': {"weight": 10},
-             'pelvis_rotation': {"weight": 10},
-             'pelvis_tx': {"weight": 5},
-             'pelvis_ty': {"weight": 5},
-             'pelvis_tz': {"weight": 5}, 
-             'hip_flexion_l': {"weight": 10},
-             'hip_adduction_l': {"weight": 10},
-             'hip_rotation_l': {"weight": 10},
-             'hip_flexion_r': {"weight": 10},
-             'hip_adduction_r': {"weight": 10},
-             'hip_rotation_r': {"weight": 10},
-             'knee_angle_l': {"weight": 10},
-             'knee_angle_r': {"weight": 10},
-             'ankle_angle_l': {"weight": 10},
-             'ankle_angle_r': {"weight": 10},
-             'subtalar_angle_l': {"weight": 5},
-             'subtalar_angle_r': {"weight": 5},
-             'lumbar_extension': {"weight": 10}, # reduce weight?
-             'lumbar_bending': {"weight": 10},
-             'lumbar_rotation': {"weight": 10},
-             'arm_flex_l': {"weight": 10},
-             'arm_add_l': {"weight": 10},
-             'arm_rot_l': {"weight": 10},
-             'arm_flex_r': {"weight": 10},
-             'arm_add_r': {"weight": 10},
-             'arm_rot_r': {"weight": 10},
-             'elbow_flex_l': {"weight": 10},
-             'elbow_flex_r': {"weight": 10},
-             'pro_sup_l': {"weight": 10},
-             'pro_sup_r': {"weight": 10}},
-         'grfs_toTrack': {
-             'all': {"weight": 10}}, 
-         'CoP_mask': {
-             'right': range(0,100),
-             'left': range(0,100)},
-         'input_times': range(0,100),
-         'pelvisResiduals_toTrack': {
-             'pelvis_tx': {"weight": 1},
-             'pelvis_ty': {"weight": 1},
-             'pelvis_tz': {"weight": 1},
-             'pelvis_tilt': {"weight": 100},
-             'pelvis_list': {"weight": 100},
-             'pelvis_rotation': {"weight": 100}},
-         'filter_grfs_toTrack': True,
-         'cutoff_freq_grfs': 6,
-         'filter_cops_toTrack': True,
-         'cutoff_freq_cops': 30,
-         'allowPelvisResiduals': True,        
-         'coordinate_constraints': {
-             'pelvis_ty': {"env_bound": 0.1},
-             'pelvis_tx': {"env_bound": 0.1}},
-         'enableLimitTorques': True,
-         'filter_Qs_toTrack': True,
-         'cutoff_freq_Qs': 6,
-         'filter_Qds_toTrack': True,
-         'cutoff_freq_Qds': 6,
-         'filter_Qdds_toTrack': True,
-         'cutoff_freq_Qdds': 6,
-         'splineQds': True,
-         'torque_driven_model': False,
-         'meshDensity': 50} # TODO RETURN TO 100
+    
     
     
     setups['walking_periodic_grf_tracking'] = {

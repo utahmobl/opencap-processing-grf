@@ -29,6 +29,7 @@ import numpy as np
 from scipy import signal
 import matplotlib.pyplot as plt
 from utils import storage_to_dataframe, download_trial, get_trial_id
+import pandas as pd
 
 def lowPassFilter(time, data, lowpass_cutoff_frequency, order=4):
     
@@ -38,6 +39,54 @@ def lowPassFilter(time, data, lowpass_cutoff_frequency, order=4):
     dataFilt = signal.sosfiltfilt(sos, data, axis=0)
 
     return dataFilt
+
+
+def getCOP_masks(storage_file, forceNames=None, threshold=10):
+    """
+    Returns binary masks indicating when vertical GRFs exceed a threshold
+    for both right and left sides, based on a .mot file.
+
+    Parameters:
+    - storage_file: str, path to the .mot file
+    - forceNames: dict, optional mapping of GRF names
+        e.g., {'r': 'R_ground_force', 'l': 'L_ground_force', 'suffix': '_v'}
+    - threshold: float, force threshold (default is 10 N)
+
+    Returns:
+    - CoP_right_mask: numpy array of 0s and 1s
+    - CoP_left_mask: numpy array of 0s and 1s
+    """
+
+    # Default naming convention for GRF columns
+    if forceNames is None:
+        forceNames = {'r': 'R_ground_force', 'l': 'L_ground_force', 'suffix': '_v'}
+
+    # === Parse headers from the .mot file ===
+    with open(storage_file, 'r') as file:
+        lines = file.readlines()
+        for line in lines:
+            if line.strip().startswith("time"):
+                headers = line.strip().split()
+                break
+
+    # Read the actual data using the headers
+    df = pd.read_csv(storage_file, delim_whitespace=True, skiprows=11, names=headers)
+
+    # Get vertical GRFs (y-direction)
+    grf_r_y = df[forceNames['r'] + forceNames['suffix'] + 'y'].values
+    grf_l_y = df[forceNames['l'] + forceNames['suffix'] + 'y'].values
+
+    # Create masks: 1 if force > threshold, else 0
+    CoP_right_mask = (grf_r_y > threshold).astype(int)
+    CoP_left_mask = (grf_l_y > threshold).astype(int)
+
+    return CoP_right_mask, CoP_left_mask
+
+
+
+
+
+
 
 # %% Segment gait
 def segment_gait(session_id, trial_name, data_folder, gait_cycles_from_end=0):
@@ -529,46 +578,20 @@ def generate_model_with_contacts(
     # %% Add contact spheres to the scaled model.
     # The parameters of the foot-ground contacts are based on previous work. We
     # scale the contact sphere locations based on foot dimensions.
-    # reference_contact_spheres = {
-    #     "s1_r": {"radius": 0.032, "location": np.array([0.0019011578840796601,   -0.01,  -0.00382630379623308]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_r"},
-    #     "s2_r": {"radius": 0.032, "location": np.array([0.14838639994206301,     -0.01,  -0.028713422052654002]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_r"},
-    #     "s3_r": {"radius": 0.032, "location": np.array([0.13300117060705099,     -0.01,  0.051636247344956601]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_r"},
-    #     #"s4_r": {"radius": 0.016, "location": np.array([0.066234666199163503,    -0.01,  0.026364160674169801]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_r"},
-    #     "s4_r": {"radius": 0.032, "location": np.array([0.066234666199163503,    -0.01,  0.026364160674169801]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_r"},
-    #     "s5_r": {"radius": 0.032, "location": np.array([0.059999999999999998,    -0.01,  -0.018760308461917698]), "orientation": np.array([0, 0, 0]), "socket_frame": "toes_r" },
-    #     "s6_r": {"radius": 0.032, "location": np.array([0.044999999999999998,    -0.01,  0.061856956754965199]), "orientation": np.array([0, 0, 0]), "socket_frame": "toes_r" },
-    #     "s1_l": {"radius": 0.032, "location": np.array([0.0019011578840796601,   -0.01,  0.00382630379623308]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_l"},
-    #     "s2_l": {"radius": 0.032, "location": np.array([0.14838639994206301,     -0.01,  0.028713422052654002]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_l"},
-    #     "s3_l": {"radius": 0.032, "location": np.array([0.13300117060705099,     -0.01,  -0.051636247344956601]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_l"},
-    #     "s4_l": {"radius": 0.032, "location": np.array([0.066234666199163503,    -0.01,  -0.026364160674169801]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_l"},
-    #     "s5_l": {"radius": 0.032, "location": np.array([0.059999999999999998,    -0.01,  0.018760308461917698]), "orientation": np.array([0, 0, 0]), "socket_frame": "toes_l" },
-    #     "s6_l": {"radius": 0.032, "location": np.array([0.044999999999999998,    -0.01,  -0.061856956754965199]), "orientation": np.array([0, 0, 0]), "socket_frame": "toes_l" }}      
-    # reference_scale_factors = {"calcn_r": np.array([0.91392399999999996, 0.91392399999999996, 0.91392399999999996]),
-    #                            "toes_r":  np.array([0.91392399999999996, 0.91392399999999996, 0.91392399999999996]),
-    #                            "calcn_l": np.array([0.91392399999999996, 0.91392399999999996, 0.91392399999999996]),
-    #                            "toes_l":  np.array([0.91392399999999996, 0.91392399999999996, 0.91392399999999996])}
-    # reference_contact_half_space = {"name": "floor", "location": np.array([0, 0, 0]),"orientation": np.array([0, 0, -np.pi/2]), "frame": "ground"}
-    # stiffness = 1000000
-    # dissipation = 2.0
-    # static_friction = 0.8
-    # dynamic_friction = 0.8
-    # viscous_friction = 0.5
-    # transition_velocity = 0.2
-    
-    # EYM Edits to implement Antoine optimized sphere model
     reference_contact_spheres = {
-        "s1_r": {"radius": 0.03232, "location": np.array([-0.000460642, -0.01, -0.00564225]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_r"},
-        "s2_r": {"radius": 0.03232, "location": np.array([0.0655687, -0.01, 0.0225828]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_r"},
-        "s3_r": {"radius": 0.023374, "location": np.array([0.180314, -0.01, 0.0239173]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_r"},
-        "s4_r": {"radius": 0.020508, "location": np.array([0.180314, -0.01, -0.0112908]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_r"},
-        "s5_r": {"radius": 0.016244, "location": np.array([0.0580873, -0.01, -0.00385841]), "orientation": np.array([0, 0, 0]), "socket_frame": "toes_r" },
-        "s6_r": {"radius": 0.018414, "location": np.array([1.89942e-06, -0.01, 0.0251717]), "orientation": np.array([0, 0, 0]), "socket_frame": "toes_r" },
-        "s1_l": {"radius": 0.03232, "location": np.array([-0.000460642, -0.01, 0.00564225]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_l"},
-        "s2_l": {"radius": 0.03232, "location": np.array([0.0655687, -0.01, -0.0225828]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_l"},
-        "s3_l": {"radius": 0.023374, "location": np.array([0.180314, -0.01, -0.0239173]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_l"},
-        "s4_l": {"radius": 0.020508, "location": np.array([0.180314, -0.01, 0.0112908]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_l"},
-        "s5_l": {"radius": 0.016244, "location": np.array([0.0580873, -0.01, 0.00385841]), "orientation": np.array([0, 0, 0]), "socket_frame": "toes_l" },
-        "s6_l": {"radius": 0.018414, "location": np.array([1.89942e-06, -0.01, -0.0251717]), "orientation": np.array([0, 0, 0]), "socket_frame": "toes_l" }}      
+        "s1_r": {"radius": 0.032, "location": np.array([0.0019011578840796601,   -0.01,  -0.00382630379623308]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_r"},
+        "s2_r": {"radius": 0.032, "location": np.array([0.14838639994206301,     -0.01,  -0.028713422052654002]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_r"},
+        "s3_r": {"radius": 0.032, "location": np.array([0.13300117060705099,     -0.01,  0.051636247344956601]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_r"},
+        #"s4_r": {"radius": 0.016, "location": np.array([0.066234666199163503,    -0.01,  0.026364160674169801]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_r"},
+        "s4_r": {"radius": 0.032, "location": np.array([0.066234666199163503,    -0.01,  0.026364160674169801]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_r"},
+        "s5_r": {"radius": 0.032, "location": np.array([0.059999999999999998,    -0.01,  -0.018760308461917698]), "orientation": np.array([0, 0, 0]), "socket_frame": "toes_r" },
+        "s6_r": {"radius": 0.032, "location": np.array([0.044999999999999998,    -0.01,  0.061856956754965199]), "orientation": np.array([0, 0, 0]), "socket_frame": "toes_r" },
+        "s1_l": {"radius": 0.032, "location": np.array([0.0019011578840796601,   -0.01,  0.00382630379623308]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_l"},
+        "s2_l": {"radius": 0.032, "location": np.array([0.14838639994206301,     -0.01,  0.028713422052654002]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_l"},
+        "s3_l": {"radius": 0.032, "location": np.array([0.13300117060705099,     -0.01,  -0.051636247344956601]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_l"},
+        "s4_l": {"radius": 0.032, "location": np.array([0.066234666199163503,    -0.01,  -0.026364160674169801]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_l"},
+        "s5_l": {"radius": 0.032, "location": np.array([0.059999999999999998,    -0.01,  0.018760308461917698]), "orientation": np.array([0, 0, 0]), "socket_frame": "toes_l" },
+        "s6_l": {"radius": 0.032, "location": np.array([0.044999999999999998,    -0.01,  -0.061856956754965199]), "orientation": np.array([0, 0, 0]), "socket_frame": "toes_l" }}      
     reference_scale_factors = {"calcn_r": np.array([0.91392399999999996, 0.91392399999999996, 0.91392399999999996]),
                                "toes_r":  np.array([0.91392399999999996, 0.91392399999999996, 0.91392399999999996]),
                                "calcn_l": np.array([0.91392399999999996, 0.91392399999999996, 0.91392399999999996]),
@@ -580,6 +603,32 @@ def generate_model_with_contacts(
     dynamic_friction = 0.8
     viscous_friction = 0.5
     transition_velocity = 0.2
+    
+    # EYM Edits to implement Antoine optimized sphere model
+    # reference_contact_spheres = {
+    #     "s1_r": {"radius": 0.03232, "location": np.array([-0.000460642, -0.01, -0.00564225]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_r"},
+    #     "s2_r": {"radius": 0.03232, "location": np.array([0.0655687, -0.01, 0.0225828]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_r"},
+    #     "s3_r": {"radius": 0.023374, "location": np.array([0.180314, -0.01, 0.0239173]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_r"},
+    #     "s4_r": {"radius": 0.020508, "location": np.array([0.180314, -0.01, -0.0112908]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_r"},
+    #     "s5_r": {"radius": 0.016244, "location": np.array([0.0580873, -0.01, -0.00385841]), "orientation": np.array([0, 0, 0]), "socket_frame": "toes_r" },
+    #     "s6_r": {"radius": 0.018414, "location": np.array([1.89942e-06, -0.01, 0.0251717]), "orientation": np.array([0, 0, 0]), "socket_frame": "toes_r" },
+    #     "s1_l": {"radius": 0.03232, "location": np.array([-0.000460642, -0.01, 0.00564225]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_l"},
+    #     "s2_l": {"radius": 0.03232, "location": np.array([0.0655687, -0.01, -0.0225828]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_l"},
+    #     "s3_l": {"radius": 0.023374, "location": np.array([0.180314, -0.01, -0.0239173]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_l"},
+    #     "s4_l": {"radius": 0.020508, "location": np.array([0.180314, -0.01, 0.0112908]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_l"},
+    #     "s5_l": {"radius": 0.016244, "location": np.array([0.0580873, -0.01, 0.00385841]), "orientation": np.array([0, 0, 0]), "socket_frame": "toes_l" },
+    #     "s6_l": {"radius": 0.018414, "location": np.array([1.89942e-06, -0.01, -0.0251717]), "orientation": np.array([0, 0, 0]), "socket_frame": "toes_l" }}      
+    # reference_scale_factors = {"calcn_r": np.array([0.91392399999999996, 0.91392399999999996, 0.91392399999999996]),
+    #                            "toes_r":  np.array([0.91392399999999996, 0.91392399999999996, 0.91392399999999996]),
+    #                            "calcn_l": np.array([0.91392399999999996, 0.91392399999999996, 0.91392399999999996]),
+    #                            "toes_l":  np.array([0.91392399999999996, 0.91392399999999996, 0.91392399999999996])}
+    # reference_contact_half_space = {"name": "floor", "location": np.array([0, 0, 0]),"orientation": np.array([0, 0, -np.pi/2]), "frame": "ground"}
+    # stiffness = 1000000
+    # dissipation = 2.0
+    # static_friction = 0.8
+    # dynamic_friction = 0.8
+    # viscous_friction = 0.5
+    # transition_velocity = 0.2
     
     # Add contact spheres and SmoothSphereHalfSpaceForces.
     opensim.Logger.setLevelString('error')
@@ -668,4 +717,76 @@ def generate_model_with_contacts(
     model.finalizeConnections
     model.initSystem()
     model.printToXML(pathOutputModel)
+    
+
+
+def map_stance_phase(gait_events, time_len):
+    """
+    Compute stance percent (0–100) for both legs using gait_events.
+    Uses the first full stance phase from either leg as a reference.
+
+    Parameters:
+        gait_events (dict): Dictionary containing:
+            - 'hsIps', 'toIps', 'hsCont', 'toCont': np.ndarray of indices
+            - 'ipsilateralLeg': 'l' or 'r'
+        time_len (int): Length of the time vector
+
+    Returns:
+        stance_percent_l (np.ndarray): Stance % for left leg (NaN outside stance)
+        stance_percent_r (np.ndarray): Stance % for right leg (NaN outside stance)
+    """
+
+    # Assign events based on ipsilateral leg label
+    if gait_events['ipsilateralLeg'] == 'l':
+        hs_l, to_l = gait_events['hsIps'], gait_events['toIps']
+        hs_r, to_r = gait_events['hsCont'], gait_events['toCont']
+    else:
+        hs_r, to_r = gait_events['hsIps'], gait_events['toIps']
+        hs_l, to_l = gait_events['hsCont'], gait_events['toCont']
+
+    # --- Step 1: Find reference stance duration ---
+    def get_first_stance_duration(hs, to):
+        for hs_i in sorted(hs):
+            future_to = to[to > hs_i]
+            if future_to.size > 0:
+                return future_to[0] - hs_i + 1
+        return None
+
+    N_ref = get_first_stance_duration(hs_l, to_l)
+    if N_ref is None:
+        N_ref = get_first_stance_duration(hs_r, to_r)
+    if N_ref is None:
+        raise ValueError("No complete stance phase found on either leg.")
+
+    # --- Step 2: Interpolate stance % ---
+    def interpolate_leg(hs, to, N_ref):
+        percent = np.full(time_len, np.nan)
+        used_to = set()
+
+        for hs_i in hs:
+            future_to = to[to > hs_i]
+            if future_to.size > 0:
+                to_i = future_to[0]
+                used_to.add(to_i)
+                idx = np.arange(hs_i, min(to_i + 1, time_len))
+                percent[idx] = np.linspace(0, 100, N_ref)[-len(idx):]
+            else:
+                idx = np.arange(hs_i, time_len)
+                n_pts = len(idx)
+                percent[idx] = np.linspace(0, 100 * n_pts / N_ref, n_pts)
+
+        for to_i in to:
+            if to_i in used_to:
+                continue
+            idx = np.arange(0, to_i + 1)
+            n_pts = len(idx)
+            percent[idx] = np.linspace(100 * (1 - n_pts / N_ref), 100, n_pts)
+
+        return percent
+
+    # --- Step 3: Compute stance percent for both legs ---
+    stance_percent_l = interpolate_leg(hs_l, to_l, N_ref)
+    stance_percent_r = interpolate_leg(hs_r, to_r, N_ref)
+
+    return stance_percent_l, stance_percent_r
 

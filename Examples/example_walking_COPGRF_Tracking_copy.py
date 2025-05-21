@@ -93,6 +93,8 @@ runComparison = False
 trials = ['1', '2', '3']
 subjects = ['2', '3' ,'4', '5', '6', '7', '8', '9', '10', '11']
 
+trials = ['1']
+subjects = ['2']
 
 
 
@@ -114,7 +116,7 @@ for subject in subjects:
                 
                 
                 path_to_data = path_to_original_data + '\\subject' + subject + '\\walking' + walking_trial
-               #ik_path = os.path.join(path_to_data,  'walking' + walking_trial + '_ik.mot')
+                #ik_path = os.path.join(path_to_data,  'walking' + walking_trial + '_ik.mot')
                 ik_path = f"C:\\Users\\MoBL3\\Documents\\GRF_Project\\LabValidation_withVideos\\subject{subject}\\OpenSimData\\Mocap\\IK\\walking{walking_trial}.mot"
                 
                 #grf_path = os.path.join(path_to_data,  'Predicted_GRF.mot')
@@ -192,15 +194,15 @@ for subject in subjects:
         
 
 
-                case = 'Mocap IK GRFs noPR FT Bulk' # Name case based on stiffness value
+                case = 'Mocap IK GRFs noPR FT_True, FT0, cop100' # Name case based on stiffness value
                 settings['weights']['copMonotonicTerm'] = 0
                 settings['weights']['copAccelerationTerm'] = 0
-                settings['weights']['copTrackingTerm'] = 0.1
+                settings['weights']['copTrackingTerm'] = 100
                 settings['weights']['grfTrackingTerm'] = 0.001
                 settings['weights']['pelvisResidualsTerm'] = 0
                 settings[ 'allowPelvisResiduals'] = False
                 settings['weights']['positionTrackingTerm'] = 1000
-                settings['weights']['footTorqueTerm'] = 0.000001
+                settings['weights']['footTorqueTerm'] = 0
                 settings['torque_driven_model']  =  True
                 settings['foot_torque_actuator']  =  True
                 settings['weights']['contrainCOPX_to_footMarkers'] = 0;

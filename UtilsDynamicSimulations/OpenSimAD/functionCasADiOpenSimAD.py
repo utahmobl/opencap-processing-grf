@@ -206,37 +206,76 @@ def normSumWeightedSqrDiff(dim):
 
 
 
-def derivativeSumOfNegatives(dim1, dim2):
+def derivativeSumOfNegatives(dim1, dim2, small_derivative_threshold=0.001):
     """
-    Computes a weighted squared sum of negative derivatives along columns.
+    Computes a weighted squared sum of:
+    1. Negative derivatives (strong penalty)
+    2. Derivatives with magnitude < threshold (small penalty)
     
     Args:
         dim1 (int): Number of rows (e.g., 52 for time steps).
         dim2 (int): Number of columns (e.g., 3 for COP data).
+        small_derivative_threshold (float): Threshold below which derivatives are penalized.
     
     Returns:
-        casadi.Function: A function that computes the weighted squared sum.
+        casadi.Function: A function that computes the weighted penalized sum.
     """
     # Function variables
     x = ca.SX.sym('x', dim1, dim2)  # Input matrix (dim1 x dim2)
     w = ca.SX.sym('w', dim2, 1)  # Weight vector (dim2 x 1)
 
-    # Compute finite differences along columns (derivative)
-    derivative = x[1:, :] - x[:-1, :]  # (dim1-1 x dim2)
+    # Compute derivatives (finite differences)
+    derivative = x[1:, :] - x[:-1, :]  # Shape: (dim1-1, dim2)
 
-    # **Very large penalty for non-increasing values**
-    non_increasing_penalty = (ca.sum1(ca.fabs(ca.fmin(derivative, 0)))**2)*100
-   # **Extreme penalty for non-increasing values**
-    #non_increasing_penalty = ca.if_else(derivative < 0, ca.exp(-10 * derivative), 0)  # Large multiplier
+    # **1. Heavy Penalty for Negative Derivatives (Quadratic)**
+    neg_deriv = ca.fmin(derivative, 0)  # Only negative derivatives
+    neg_penalty = neg_deriv**4  # Quadratic penalty (strong)
 
-    # **Final weighted penalty**
-    weighted_penalty = ca.mtimes(non_increasing_penalty, w)
+    # **2. Mild Penalty for Small Derivatives (Linear)**
+    small_deriv_threshold = 0.01
+    small_deriv_mask = ca.fabs(derivative) < small_deriv_threshold
+    small_penalty = (small_deriv_threshold - ca.fabs(derivative)) * small_deriv_mask  # Linear penalty
 
-    # Create CasADi function
-    f_derivativeSumOfNegatives = ca.Function('f_derivativeSumOfNegatives', [x, w], [weighted_penalty])
-    return f_derivativeSumOfNegatives
+    # **Total Penalty (Weighted Sum)**
+    total_penalty = (
+        ca.sum2(ca.mtimes(neg_penalty, ca.diag(w.T))) +  # Heavy penalty on negatives
+        ca.sum2(ca.mtimes(small_penalty, ca.diag(w.T)))  # Mild penalty on small derivatives
+    )
 
+    f = ca.Function('f_derivativePenaltyHardcoded', [x, w], [total_penalty])
+    return f
 
+def thirdDerivativeInflectionPenalty(dim1, dim2):
+    """
+    Penalizes inflection points by applying a weighted sum of squared
+    third-order finite differences (i.e., curvature change).
+
+    This approximates zero-crossings in the second derivative, which signal
+    changes in concavity (inflection points) in a smooth, differentiable way.
+
+    Args:
+        dim1 (int): Number of rows (must be ≥ 4).
+        dim2 (int): Number of columns (e.g., 3 for COP data).
+
+    Returns:
+        casadi.Function: CasADi function that outputs a scalar penalty.
+    """
+    import casadi as ca
+
+    # Inputs
+    x = ca.SX.sym('x', dim1, dim2)  # Time-series matrix: (dim1 x dim2)
+    w = ca.SX.sym('w', dim2, 1)     # Weights per dimension (dim2 x 1)
+
+    # Compute third derivative: f'''(i) = x[i] - 3x[i-1] + 3x[i-2] - x[i-3]
+    third_deriv = x[3:, :] - 3 * x[2:-1, :] + 3 * x[1:-2, :] - x[0:-3, :]
+    squared = third_deriv**2
+
+    # Weighted sum of squared third derivatives
+    total_penalty = ca.sum2(ca.mtimes(squared, ca.diag(w.T)))
+
+    # Return as CasADi function
+    f = ca.Function('f_thirdDerivativeInflectionPenalty', [x, w], [total_penalty])
+    return f
 
 def totalVariationGradientPenalty(dim1, dim2):
     """
@@ -291,7 +330,7 @@ def doubleDerivativeSquare(dim1, dim2):
     
     # Compute finite differences (gradients) along columns
     derivative2 = derivative[1:, :] - derivative[:-1, :]  # Shape: (dim1-1, dim2)
-    derivative_penalty = (ca.sum1(ca.fmax(ca.fabs(derivative2), 0.01))**2)
+    derivative_penalty = (ca.sum1(ca.fmax(ca.fabs(derivative2), 0.01)))
 
     # derivative_penalty = (ca.sum1(ca.fmax(ca.fabs(derivative), 0.01))**2)
 
@@ -338,9 +377,27 @@ def getCOP_casadi(N):
 
 
 
-def calculate_rmse_casadi(dim):
+def calculate_rmse_casadi(dim, threshold=0.0001):
     
-    # Function variables
+    # # Function variables: both are (dim x 1), which may be just scalar (1x1)
+    # Mocap_R = ca.SX.sym('Mocap_R', dim, 1)
+    # X_COP = ca.SX.sym('X_COP', dim, 1)
+
+    # # Compute absolute error
+    # abs_error = ca.fabs(Mocap_R - X_COP)
+
+    # # Penalize only if outside the threshold
+    # excess_error = ca.fmax(0, abs_error - threshold)
+
+    # # Apply RMSE formula
+    # rmse_thresh = ca.sqrt(ca.sumsqr(excess_error) / dim)
+
+    # # Return CasADi function
+    # f_thresh_rmse = ca.Function('f_thresh_COP_rmse', [Mocap_R, X_COP], [rmse_thresh])
+
+    # return f_thresh_rmse
+    
+        # Function variables
     Mocap_R = ca.SX.sym('Mocap_R', dim, 1)
     X_COP = ca.SX.sym('X_COP', dim, 1)
     
@@ -352,4 +409,23 @@ def calculate_rmse_casadi(dim):
     
     return f_rmse
 
+
+def copXOutsideBoundsPenalty():
+    import casadi as ca
+
+    def _penalty(COP, foot_x_min, foot_x_max, vGRF, weight_vector):
+        COPX = COP[0]
+        x_center = 0.5 * (foot_x_min + foot_x_max)
+        x_radius = 0.5 * (foot_x_max - foot_x_min)
+        delta = ca.fabs(COPX - x_center) - x_radius
+
+        # Smooth Huber-like penalty: quadratic for small violations, linear for large
+        eps = 1e-3  # smoothing threshold
+        quad_region = ca.fmax(0, ca.fmin(delta, eps))
+        linear_region = ca.fmax(0, delta - eps)
+        smooth_penalty = 0.5 * quad_region**2 / eps + linear_region
+
+        return ca.if_else(vGRF > 2.0, weight_vector[0] * smooth_penalty, 0.0)
+
+    return _penalty
 

@@ -811,6 +811,99 @@ class gait_analysis(kinematics):
         coordinateValuesTimeNormalized['indiv'] = [pd.DataFrame(data=d, columns=colNames) for d in coordValuesNorm]
         
         return coordinateValuesTimeNormalized
+    
+    def compute_foot_trajectory_gait_frame(self, return_all=False):
+        """
+        Computes the trajectory of the foot in the gait reference frame.
+        
+        Parameters
+        ----------
+        return_all : bool, optional
+            If True, returns the foot trajectory for all gait cycles
+            If False, returns the average foot trajectory across all gait cycles
+            
+        Returns
+        -------
+        foot_trajectories : dict or list of dict
+            Dictionary containing the foot trajectories in the gait frame
+        units : str
+            The units of the trajectories ('m')
+        """
+        leg, contLeg = self.get_leg()
+        
+        # Use the foot markers already rotated into the gait frame
+        ips_calc_gait = self.markerDictRotatedPerGaitCycle['markers'][leg + '_calc_study']
+        cont_calc_gait = self.markerDictRotatedPerGaitCycle['markers'][contLeg + '_calc_study']
+        
+        # Also get toe markers for a more complete foot representation
+        ips_toe_gait = self.markerDictRotatedPerGaitCycle['markers'][leg + '_toe_study']
+        cont_toe_gait = self.markerDictRotatedPerGaitCycle['markers'][contLeg + '_toe_study']
+        
+        # Time-normalize the trajectories for each gait cycle
+        foot_trajectories = []
+        for i in range(self.nGaitCycles):
+            start_idx = self.gaitEvents['ipsilateralIdx'][i, 0]
+            end_idx = self.gaitEvents['ipsilateralIdx'][i, 2]
+            
+            # Extract trajectories for this gait cycle
+            cycle_indices = np.arange(start_idx, end_idx + 1)
+            norm_indices = np.linspace(0, len(cycle_indices) - 1, 101)
+            
+            # Normalize ipsilateral foot markers
+            ips_calc_norm = np.array([np.interp(norm_indices, 
+                                               np.arange(len(cycle_indices)), 
+                                               ips_calc_gait[cycle_indices, dim]) 
+                                     for dim in range(3)]).T
+            
+            ips_toe_norm = np.array([np.interp(norm_indices, 
+                                              np.arange(len(cycle_indices)), 
+                                              ips_toe_gait[cycle_indices, dim]) 
+                                    for dim in range(3)]).T
+            
+            # Normalize contralateral foot markers
+            cont_calc_norm = np.array([np.interp(norm_indices, 
+                                                np.arange(len(cycle_indices)), 
+                                                cont_calc_gait[cycle_indices, dim]) 
+                                      for dim in range(3)]).T
+            
+            cont_toe_norm = np.array([np.interp(norm_indices, 
+                                               np.arange(len(cycle_indices)), 
+                                               cont_toe_gait[cycle_indices, dim]) 
+                                     for dim in range(3)]).T
+            
+            foot_trajectories.append({
+                'ipsilateral': {
+                    'calcaneus': ips_calc_norm,
+                    'toe': ips_toe_norm
+                },
+                'contralateral': {
+                    'calcaneus': cont_calc_norm,
+                    'toe': cont_toe_norm
+                }
+            })
+        
+        # Units
+        units = 'm'
+        
+        if return_all:
+            return foot_trajectories, units
+        else:
+            # Average across all gait cycles
+            avg_ips_calc = np.mean([traj['ipsilateral']['calcaneus'] for traj in foot_trajectories], axis=0)
+            avg_ips_toe = np.mean([traj['ipsilateral']['toe'] for traj in foot_trajectories], axis=0)
+            avg_cont_calc = np.mean([traj['contralateral']['calcaneus'] for traj in foot_trajectories], axis=0)
+            avg_cont_toe = np.mean([traj['contralateral']['toe'] for traj in foot_trajectories], axis=0)
+            
+            return {
+                'ipsilateral': {
+                    'calcaneus': avg_ips_calc,
+                    'toe': avg_ips_toe
+                },
+                'contralateral': {
+                    'calcaneus': avg_cont_calc,
+                    'toe': avg_cont_toe
+                }
+            }, units
 
     def segment_walking(self, n_gait_cycles=-1, leg='auto', visualize=False):
 
