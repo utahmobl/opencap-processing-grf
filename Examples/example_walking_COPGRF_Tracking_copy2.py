@@ -100,7 +100,7 @@ subjects = ['2']
 for subject in subjects:
     for walking_trial in trials:
 
-        # try:
+        try:
 
             
                 if subject == '11':
@@ -193,32 +193,31 @@ for subject in subjects:
         
 
 
-                case = 'Mocap IK newFT IDWeights cop10 pos100 coordTrack v13' # Name case based on stiffness value
+                case = 'Mocap IK newFT IDWeights cop10 pos1000 CE0 pelvistrack10' # Name case based on stiffness value
                 settings['weights']['copMonotonicTerm'] = 0
                 settings['weights']['copAccelerationTerm'] = 0
                 settings['weights']['contrainCOPX_to_footMarkers'] = 0;
                 settings['weights']['copTrackingTerm'] = 10
                 
                 settings['weights']['grfTrackingTerm'] = 0.001             
-                settings['weights']['positionTrackingTerm'] = 100
+                settings['weights']['positionTrackingTerm'] = 1000
                 settings['torque_driven_model']  =  True
-                settings['ipopt_tolerance'] = 1
 
                 
                 # Edits to try to make this close to ID
                 settings['weights']['accelerationTrackingTerm'] = 0
-                settings['weights']['velocityTrackingTerm'] = 0
                 settings['weights']['pelvisResidualsTerm'] = 0.0000001
                 settings[ 'allowPelvisResiduals'] = True
                 settings['weights']['activationTerm'] = 0.00001
-                #settings['weights']['coordinateExcitationTerm'] = 0
-                #settings['weights']['jointAccelerationTerm'] =0
+                settings['weights']['coordinateExcitationTerm'] = 0
+                settings['weights']['jointAccelerationTerm'] =0
                 settings['coordinates_toTrack']['lumbar_extension']['weight'] = 5
                 settings['coordinates_toTrack']['lumbar_bending']['weight'] = 5
                 settings['coordinates_toTrack']['lumbar_rotation']['weight'] = 5
-                settings['coordinates_toTrack']['knee_angle_l']['weight'] = 750
-                settings['coordinates_toTrack']['knee_angle_r']['weight'] = 750
-                settings['coordinates_toTrack']['pelvis_tx']['weight'] = 750
+                
+                settings['coordinates_toTrack']['pelvis_tx']['weight'] = 5
+                settings['coordinates_toTrack']['pelvis_ty']['weight'] = 5
+                settings['coordinates_toTrack']['pelvis_tz']['weight'] = 5
 
             
                 # % Run the dynamic simulation.
@@ -226,8 +225,8 @@ for subject in subjects:
                 
                 # Plot results.
                 plotResultsOpenSimAD(dataFolder, session_id, trial_name, settings, [case])
-        # except:
-        #     print('Errored')
+        except:
+            print('Errored')
                 
 
 

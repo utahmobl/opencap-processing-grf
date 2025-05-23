@@ -46,14 +46,13 @@ def get_setup(motion_type):
              'lumbarExcitationTerm': 0.001,
              'jointAccelerationTerm': 0.001, # turn this off
              'activationDtTerm': 0.001,
-             'forceDtTerm': 0.001,
-             'footTorqueTerm': 0.001},     # get rid of this in weights        
+             'forceDtTerm': 0.001},          
          'coordinates_toTrack': {
              'pelvis_tilt': {"weight": 10},
              'pelvis_list': {"weight": 10},
              'pelvis_rotation': {"weight": 10},
-             'pelvis_tx': {"weight": 5},
-             'pelvis_ty': {"weight": 5},
+             'pelvis_tx': {"weight": 5}, # default 5
+             'pelvis_ty': {"weight": 5}, 
              'pelvis_tz': {"weight": 5}, 
              'hip_flexion_l': {"weight": 10},
              'hip_adduction_l': {"weight": 10},
@@ -112,8 +111,6 @@ def get_setup(motion_type):
          'filter_Qdds_toTrack': True,
          'cutoff_freq_Qdds': 6,
          'splineQds': True,
-         'torque_driven_model': False,
-         'foot_torque_actuator': True,
          'meshDensity': 50} # TODO RETURN TO 100
     
     

@@ -336,3 +336,13 @@ class bounds_tracking:
                                          columns=['offset_y'])
         
         return upperBoundsOffset, lowerBoundsOffset
+
+    def getBoundsFootTorqueActuator(self, max_torque=1000, scaling=1.0):
+        """
+        Returns fixed symmetric bounds and scaling for foot torque actuators.
+        r_x, r_z, l_x, l_z are the four torques used.
+        """
+        torque_labels = ['r_x', 'r_z', 'l_x', 'l_z']
+        upper = pd.DataFrame(scaling * max_torque, index=[0], columns=torque_labels)
+        lower = pd.DataFrame(-scaling * max_torque, index=[0], columns=torque_labels)
+        return upper, lower, scaling

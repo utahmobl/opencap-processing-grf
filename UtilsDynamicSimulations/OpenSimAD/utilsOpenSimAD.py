@@ -1471,8 +1471,8 @@ def generateExternalFunction(
             f.write('\t/// Add actuator torques to GRMs\n')
             f.write('\tVec3 footTorque_r(footTorque[0], 0, footTorque[1]);  // Right foot x, z torque\n')  
             f.write('\tVec3 footTorque_l(footTorque[2], 0, footTorque[3]);  // Left foot x, z torque\n') 
-            f.write('\tGRM_r += footTorque_r;\n') 
-            f.write('\tGRM_l += footTorque_l;\n') 
+            f.write('\t///GRM_r += footTorque_r;\n') 
+            f.write('\t///GRM_l += footTorque_l;\n') 
             f.write('\n') 
         
         

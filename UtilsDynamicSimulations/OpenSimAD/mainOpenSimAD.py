@@ -67,8 +67,6 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
             weights['copAccelerationTerm'] = settings['weights']['copAccelerationTerm']
     if 'pelvisResidualsTerm' in settings['weights']:
         weights['pelvisResidualsTerm'] = settings['weights']['pelvisResidualsTerm']
-    if 'footTorqueTerm' in settings['weights']:
-        weights['footTorqueTerm'] = settings['weights']['footTorqueTerm']
     if 'contrainCOPX_to_footMarkers' in settings['weights']:
         weights['contrainCOPX_to_footMarkers'] = settings['weights']['contrainCOPX_to_footMarkers']
     
@@ -275,8 +273,13 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
         acceleration_cops = True
         
     track_cops = False
+    foot_torque_actuator = False
     if 'copTrackingTerm' in settings['weights'] and settings['weights']['copTrackingTerm'] > 0:
         track_cops  = True
+        # Include a torque actuator between ground and foot to help tracking of COP
+        foot_torque_actuator = True
+        foot_torque_names = ['torque_r_x', 'torque_r_z', 'torque_l_x', 'torque_l_z']
+
                 
     # Set filter_grfs_toTrack to True to filter the ground reaction forces
     # to be tracked with a cutoff frequency of cutoff_freq_grfs.
@@ -296,12 +299,7 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
         if 'cutoff_freq_cops' in settings:
             cutoff_freq_cops = settings['cutoff_freq_cops']
 
-    # Include a torque actuator between ground and foot to help tracking of COP
-    foot_torque_actuator = settings['foot_torque_actuator']
-    w_foot_torque_actuator = np.zeros((4,))
-    foot_torque_names = ['torque_r_x', 'torque_r_z', 'torque_l_x', 'torque_l_z']
-    if  foot_torque_actuator and settings['weights']['footTorqueTerm'] > 0:        
-        w_foot_torque_actuator = np.ones((4,)) * settings['weights']['footTorqueTerm'] 
+
 
     # Contrain COPs to be inside the foot during stance
     constrain_COPX = False
@@ -910,16 +908,16 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
 
 
     if  track_cops:
-        # from utilsOpenSimAD import getCOPx_forTracking
+        from utilsOpenSimAD import getCOPx_forTracking
         pathGRF = os.path.join(pathForceFolder, trialName + '_forces.mot')
-        # COP_input = getCOPx_forTracking(pathGRF)
+        COP_input = getCOPx_forTracking(pathGRF)
 
-        # # # Filtering
-        # if filter_cops_toTrack:
-        #     COP_input_filter = filterDataFrame(
-        #         COP_input, cutoff_frequency=cutoff_freq_cops)  
-        # else:
-        #     COP_input_filter = COP_input
+        # # Filtering
+        if filter_cops_toTrack:
+            COP_input_filter = filterDataFrame(
+                COP_input, cutoff_frequency=cutoff_freq_cops)  
+        else:
+            COP_input_filter = COP_input
             
 #         stance_percents = {'l': settings['Stance_Precentage']['left'], 'r': settings['Stance_Precentage']['right']} 
 #         CoP_masks = {
@@ -957,24 +955,24 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
             
 
         # Interpolation
-        # COP_interp = interpolateDataFrame(
-        #     COP_input_filter, timeIntervals[0], timeIntervals[1], N)
+        COP_interp = interpolateDataFrame(
+            COP_input_filter, timeIntervals[0], timeIntervals[1], N)
         
-        # legs = ['r', 'l']
-        # direcs = ['x']
-        # COP_toTrack = {}
-        # for leg in legs:
-        #     cols_to_pull = ['COP_' + leg + '_' + d for d in direcs]
-        #     COP_toTrack[leg] = selectFromDataFrame(
-        #     COP_interp, cols_to_pull).to_numpy()[:,1:] # grf_x,y,z for each leg
-        # Mocap_Cops3 = COP_toTrack
+        legs = ['r', 'l']
+        direcs = ['x']
+        COP_toTrack = {}
+        for leg in legs:
+            cols_to_pull = ['COP_' + leg + '_' + d for d in direcs]
+            COP_toTrack[leg] = selectFromDataFrame(
+            COP_interp, cols_to_pull).to_numpy()[:,1:] # grf_x,y,z for each leg
+        Mocap_Cops = COP_toTrack
         
         
         # # linear cops
-        CoP_masks = {
-            'r': COP_r_mask,
-            'l': COP_l_mask}
-        Mocap_Cops = getLinear_COPs_from_positions(foot_positions, CoP_masks, timeIntervals, N)
+        # CoP_masks = {
+        #     'r': COP_r_mask,
+        #     'l': COP_l_mask}
+        # Mocap_Cops = getLinear_COPs_from_positions(foot_positions, CoP_masks, timeIntervals, N)
 
         
     # %% Kinematic data to track.
@@ -1448,11 +1446,7 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
             lw['rActk'][c_j] = ca.vec(lw['rAct'][c_j].to_numpy().T * np.ones((1, N))).full()      
     # Foot torque actuators.
     if foot_torque_actuator:
-        # uw['FootTorque'], lw['FootTorque'], scaling['FootTorque'] = bounds.getBoundsFootTorqueActuator()
-        # TODO : This should be put in the bounds class 
-        # 1x4 dataframe with the bounds for each foot torque actuator.
-        uw['FootTorque'] = pd.DataFrame(300, index=[0], columns=['r_x', 'r_z', 'l_x', 'l_z'])
-        lw['FootTorque'] = pd.DataFrame(-300, index=[0], columns=['r_x', 'r_z', 'l_x', 'l_z'])  
+        uw['FootTorque'], lw['FootTorque'], scaling['FootTorque'] = bounds.getBoundsFootTorqueActuator(max_torque=30)
         uw['FootTorquek'] = ca.vec(uw['FootTorque'].to_numpy().T * np.ones((1, N))).full()
         lw['FootTorquek'] = ca.vec(lw['FootTorque'].to_numpy().T * np.ones((1, N))).full()
     # Static parameters.
@@ -2150,43 +2144,7 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
                               * h * B[j + 1])                           
                         
                                                 
-                # if  track_cops and weights['copTrackingTerm'] > 0:
-                    
-                #     # Import and create COP computation function
-                #     from functionCasADiOpenSimAD import getCOP_casadi
-                #     from functionCasADiOpenSimAD import calculate_rmse_casadi
-                    
-                #     f_getCOP = getCOP_casadi(1)
-                #     f_COP_rmse = calculate_rmse_casadi(1, threshold=0.05)
-                #     Mocap_R = ca.MX(Mocap_Cops['r'][k])
-                #     Mocap_L = ca.MX(Mocap_Cops['l'][k])
-                    
-                #     for leg in ['r', 'l']:
-                #         # Extract GRF and GRM over all N time points
-                #         # TODO SDU:? Isn't Tk just this timestep??
-                #         GRF_leg = Tk[idx_grf_forCOP[leg], 0]  # (3×N) Ground Reaction Force
-                #         GRM_leg = Tk[idx_grm_forCOP[leg], 0]  # (3×N) Ground Reaction Moment
-                #         COP_indices = COP_r_indices if leg == 'r' else COP_l_indices
-
-                          
-                #         # Compute COP for all N time steps (once per leg)
-                #         COP_leg = f_getCOP(GRF_leg, GRM_leg)  # (3×N) Center of Pressure
-                        
-                #         # Transpose COP_leg to match the expected input dimensions (3×N)
-                #         COP_leg = COP_leg.T  # Now COP_leg is (3, N)
-
-                #         X_COP = COP_leg[:,0]
-                #         if leg == 'r':
-                #             copTrackingTerm_r = f_COP_rmse(Mocap_R, X_COP)
-                #             if k in COP_indices:
-                #                 J += (weights['copTrackingTerm'] * copTrackingTerm_r
-                #                       * h * B[j + 1])         
-                #         if leg == 'l':
-                #             copTrackingTerm_l = f_COP_rmse(Mocap_L, X_COP)
-                #             if k in COP_indices:
-                #                 J += (weights['copTrackingTerm'] * copTrackingTerm_l 
-                #                   * h * B[j + 1])                                        
-                
+                              
                               
  
                         
@@ -2215,8 +2173,13 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
                         f_COP_rmse = calculate_rmse_casadi(1)
                         
                         # Get Mocap data for this timestep
+                 
                         Mocap_R = ca.MX(Mocap_Cops['r'][k])
                         Mocap_L = ca.MX(Mocap_Cops['l'][k])
+                        
+                        # Penalize foot torque slightly:
+                        #if foot_torque_actuator:
+                            #J += 1e-6 * ca.sumsqr(footTorque[:, k]) * h * B[j + 1]
                         
                         for leg in ['r', 'l']:
                             side = 'right' if leg == 'r' else 'left'
@@ -2293,13 +2256,7 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
                     J += (weights['pelvisResidualsTerm'] * 
                           pelvisResidualsTerm * h * B[j + 1])
                     
-                if foot_torque_actuator:
-                    footTorqueTerm = f_footTorqueActuator2(footTorque[:, k])
-                    footTorqueTerm = ca.sum1(ca.mtimes(footTorqueTerm, w_foot_torque_actuator))
-                                        
-                    J += (weights['footTorqueTerm'] * 
-                          footTorqueTerm * h * B[j + 1])
-                    
+                 
 
                         
 
@@ -2923,8 +2880,6 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
             pelvisResidualsTrackingTerm_opt_all = 0
         if withReserveActuators:    
             reserveActuatorTerm_opt_all = 0
-        if foot_torque_actuator:
-            footTorqueActuatorTerm_opt_all = 0
         if min_ratio_vGRF and weights['vGRFRatioTerm'] > 0:
             vGRFRatioTerm_opt_all = 0
         if not torque_driven_model:
@@ -3153,10 +3108,7 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
                             vGRF_rear_opt += GRF_s_opt[side][contactSpheres[side][idx_rear_sphere]][1,k]
                         vGRF_ratio_opt = np.sqrt(vGRF_front_opt/vGRF_rear_opt) 
                         vGRFRatioTerm_opt_all += (weights['vGRFRatioTerm'] * vGRF_ratio_opt * h * B[j + 1])                    
-                if foot_torque_actuator:                  
-                    footTorqueTerm = f_footTorqueActuator2(footTorque_opt[:, k])
-                    footTorqueTerm = ca.sum1(ca.mtimes(footTorqueTerm, w_foot_torque_actuator))
-                    footTorqueActuatorTerm_opt_all +=  (weights['footTorqueTerm'] * footTorqueTerm * h * B[j + 1])
+
 
 
 
@@ -3177,8 +3129,7 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
             JMotor_opt += vGRFRatioTerm_opt_all
         if withReserveActuators:    
             JMotor_opt += reserveActuatorTerm_opt_all
-        if foot_torque_actuator:
-            JMotor_opt += footTorqueActuatorTerm_opt_all.full()
+
         # Tracking terms.
         JTrack_opt = (positionTrackingTerm_opt_all.full() +  
                       velocityTrackingTerm_opt_all.full())
@@ -3257,8 +3208,7 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
             JTerms["copTrackingTerm_sc"] = copTrackingTerm_opt_all.full()[0][0] / JAll_opt[0][0]
         if allowPelvisResiduals:
             JTerms["pelvisResidualsTerm_sc"] = pelvisResidualsTrackingTerm_opt_all.full()[0][0] / JAll_opt[0][0]
-        if foot_torque_actuator:
-            JTerms["footTorqueTerm_sc"] = footTorqueActuatorTerm_opt_all.full()[0][0] / JAll_opt[0][0]
+
         if trackQdds:
             JTerms["accelerationTerm_sc"] = JTerms["accelerationTerm"] / JAll_opt[0][0]                
         # Print out contributions to the cost function.
@@ -3288,8 +3238,7 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
             print("\tAcceleration COP condition: {}%".format(np.round(JTerms["copAccelerationTerm_sc"] * 100, 2)))
         if allowPelvisResiduals:
             print("\tPelvis residuals tracking: {}%".format(np.round(JTerms["pelvisResidualsTerm_sc"] * 100, 2)))
-        if foot_torque_actuator:
-                print("\tFoot Torque Term: {}%".format(np.round(JTerms["footTorqueTerm_sc"] * 100, 2)))
+
         if trackQdds:
             print("\tAcceleration tracking: {}%".format(np.round(JTerms["accelerationTerm_sc"] * 100, 2)))           
         print("\nNumber of iterations: {}\n".format(stats["iter_count"]))
