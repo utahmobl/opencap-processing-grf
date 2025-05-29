@@ -111,7 +111,8 @@ def get_setup(motion_type):
          'filter_Qdds_toTrack': True,
          'cutoff_freq_Qdds': 6,
          'splineQds': True,
-         'meshDensity': 50} # TODO RETURN TO 100
+         'meshDensity': 50, # TODO RETURN TO 100
+         'maxIter': 5000} 
     
     
     setups['other'] = {

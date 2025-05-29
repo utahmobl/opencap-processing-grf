@@ -73,7 +73,7 @@ def interpolateNumpyArray_time(data, time, tIn, tEnd, N):
     return dataInterp 
 
 # %% Solve problem with bounds instead of constraints.
-def solve_with_bounds(opti, tolerance, useExpressionGraphFunction):
+def solve_with_bounds(opti, tolerance, useExpressionGraphFunction, maxIter):
     
     # Get guess.
     guess = opti.debug.value(opti.x, opti.initial())
@@ -137,8 +137,9 @@ def solve_with_bounds(opti, tolerance, useExpressionGraphFunction):
         s_opts["expand"] = False
     s_opts["ipopt.hessian_approximation"] = "limited-memory"
     s_opts["ipopt.mu_strategy"] = "adaptive"
-    s_opts["ipopt.max_iter"] = 5000
-    s_opts["ipopt.tol"] = 10**(-tolerance)
+    s_opts["ipopt.max_iter"] = maxIter
+    s_opts["ipopt.tol"] = 10**(-tolerance)     
+    
     solver = ca.nlpsol("solver", "ipopt", prob, s_opts)
     # Solve.
     arg = {}
@@ -155,6 +156,9 @@ def solve_with_bounds(opti, tolerance, useExpressionGraphFunction):
     stats = solver.stats()
     
     return w_opt, stats
+
+
+
 
 # %% Solver problem with constraints and not bounds.
 def solve_with_constraints(opti, tolerance):

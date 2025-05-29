@@ -87,6 +87,10 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
     coordinate_optimal_forces = {}
     if "withArms" in settings:
          withArms = settings['withArms']
+         
+    maxIter = 5000 #default iterations
+    if "maxIter" in settings:
+         maxIter = settings['maxIter']
     
     # Set withLumbarCoordinateActuators to True to actuate the lumbar 
     # coordinates with coordinate actuators. Coordinate actuator have simple
@@ -1321,6 +1325,11 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
     from functionCasADiOpenSimAD import diffTorques
     from functionCasADiOpenSimAD import normSumWeightedSqrDiff
     from functionCasADiOpenSimAD import derivativeSumOfNegatives
+    from functionCasADiOpenSimAD import getCOP_casadi
+    from functionCasADiOpenSimAD import copXOutsideBoundsPenalty
+    from functionCasADiOpenSimAD import thirdDerivativeInflectionPenalty
+    from functionCasADiOpenSimAD import calculate_rmse_casadi
+                        
     f_NMusclesSum2 = normSumSqr(nMuscles)
     f_NMusclesSumWeightedPow = normSumWeightedPow(nMuscles, powActivations)
     f_nJointsSum2 = normSumSqr(nJoints)
@@ -1446,7 +1455,7 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
             lw['rActk'][c_j] = ca.vec(lw['rAct'][c_j].to_numpy().T * np.ones((1, N))).full()      
     # Foot torque actuators.
     if foot_torque_actuator:
-        uw['FootTorque'], lw['FootTorque'], scaling['FootTorque'] = bounds.getBoundsFootTorqueActuator(max_torque=30)
+        uw['FootTorque'], lw['FootTorque'], scaling['FootTorque'] = bounds.getBoundsFootTorqueActuator(max_torque=1000)
         uw['FootTorquek'] = ca.vec(uw['FootTorque'].to_numpy().T * np.ones((1, N))).full()
         lw['FootTorquek'] = ca.vec(lw['FootTorque'].to_numpy().T * np.ones((1, N))).full()
     # Static parameters.
@@ -1900,6 +1909,8 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
         # %%  Loop over mesh points.
         
         COP_leg_all = {'r': ca.MX.zeros((N, 3)), 'l': ca.MX.zeros((N, 3))} # initizlize for loop
+        COP_RMSE_l_vec = []
+        COP_RMSE_r_vec = []
         
         for k in range(N):
             # Variables within current mesh.
@@ -2156,10 +2167,7 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
                       (constrain_COPX)  or \
                           (track_cops and weights['copTrackingTerm'] > 0):
                           
-                        from functionCasADiOpenSimAD import getCOP_casadi
-                        from functionCasADiOpenSimAD import copXOutsideBoundsPenalty
-                        from functionCasADiOpenSimAD import thirdDerivativeInflectionPenalty
-                        from functionCasADiOpenSimAD import calculate_rmse_casadi
+
 
                         # Define weights
                         w_cop_monotonic    = ca.DM([10., 0., 0.]) 
@@ -2235,14 +2243,23 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
                                 X_COP = COP_k[:,0]
                                 if leg == 'r':
                                     copTrackingTerm_r = f_COP_rmse(Mocap_R, X_COP)
+                                   
                                     if k in COP_indices:
                                         J += (weights['copTrackingTerm'] * copTrackingTerm_r
-                                              * h * B[j + 1])         
+                                              * h * B[j + 1])
+                                        COP_RMSE_r_vec.append(copTrackingTerm_r)
+                                    else:
+                                        COP_RMSE_r_vec.append(0)
+                                        
                                 if leg == 'l':
                                     copTrackingTerm_l = f_COP_rmse(Mocap_L, X_COP)
+
                                     if k in COP_indices:
                                         J += (weights['copTrackingTerm'] * copTrackingTerm_l 
                                           * h * B[j + 1])  
+                                        COP_RMSE_l_vec.append(copTrackingTerm_l)
+                                    else:
+                                        COP_RMSE_l_vec.append(0)
 
                             
     
@@ -2426,16 +2443,23 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
                 coordinate_constraints['pelvis_ty']["env_bound"] / 
                 scaling['Qs'].iloc[0]["pelvis_ty"]))
         
+           
+        
+        
         # Create NLP solver.
         opti.minimize(J)
         
+       
         # Solve problem.
         # When using the default opti, bounds are replaced by constraints,
         # which is not what we want. This functions allows using bounds and not
         # constraints.
-        from utilsOpenSimAD import solve_with_bounds
-        w_opt, stats = solve_with_bounds(opti, ipopt_tolerance,
-                                         useExpressionGraphFunction)             
+        from utilsOpenSimAD import solve_with_bounds       
+
+
+        w_opt, stats = solve_with_bounds(opti, ipopt_tolerance, useExpressionGraphFunction, maxIter)
+    
+   
         np.save(os.path.join(pathResults, 'w_opt_{}.npy'.format(case)), w_opt)
         np.save(os.path.join(pathResults, 'stats_{}.npy'.format(case)), stats)
         
@@ -2447,11 +2471,11 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
         
   
 
-        
-        if not stats['success'] == True:
-            print('PROBLEM DID NOT CONVERGE - {} - {} - {} \n\n'.format( 
-                  stats['return_status'], subject, trialName))
-            return
+        if maxIter >= 5000:
+            if not stats['success'] == True:
+                print('PROBLEM DID NOT CONVERGE - {} - {} - {} \n\n'.format( 
+                      stats['return_status'], subject, trialName))
+                return
         
         # Extract results.
         starti = 0
@@ -3004,11 +3028,19 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
                     grfTrackingTerm_opt_all += weights['grfTrackingTerm'] * grfTrackingTerm_opt  * h * B[j + 1]  
                 
                 if track_cops:
-                    copTrackingTerm_opt = (
-                        f_COP_rmse(ca.DM(Mocap_Cops['r'][k]), ca.DM(COP_all_opt['right'][0, [k]].T)) +
-                        f_COP_rmse(ca.DM(Mocap_Cops['l'][k]), ca.DM(COP_all_opt['left'][0, [k]].T))
-                    )                                                          
-                    copTrackingTerm_opt_all += weights['copTrackingTerm'] * copTrackingTerm_opt  * h * B[j + 1]  
+                    if k in COP_r_indices:
+                        copTrackingTerm_opt_r = f_COP_rmse(
+                            ca.DM(Mocap_Cops['r'][k]),
+                            ca.DM(COP_all_opt['right'][0, [k]].T)
+                        )
+                        copTrackingTerm_opt_all += weights['copTrackingTerm'] * copTrackingTerm_opt_r * h * B[j + 1]
+                
+                    if k in COP_l_indices:
+                        copTrackingTerm_opt_l = f_COP_rmse(
+                            ca.DM(Mocap_Cops['l'][k]),
+                            ca.DM(COP_all_opt['left'][0, [k]].T)
+                        )
+                        copTrackingTerm_opt_all += weights['copTrackingTerm'] * copTrackingTerm_opt_l * h * B[j + 1]
                 
 
                 if acceleration_cops and weights['copAccelerationTerm'] > 0 and k >= 3:
@@ -3431,6 +3463,10 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
             'GRM': GRM_all_opt['all'],
             'GRM_BWht': GRM_BWht_all_opt,
             'COP': COP_all_opt['all'],
+            'Mocap_COPs': Mocap_Cops,
+            'FootTorque': footTorque_opt,
+            'COP_r_indices': COP_r_indices,
+            'COP_l_indices': COP_l_indices,
             'freeM': freeT_all_opt['all'],
             'coordinates': joints,
             'coordinates_power': poweredJoints,
@@ -3477,6 +3513,10 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
                 
         np.save(os.path.join(pathResults, 'optimaltrajectories.npy'),
                 optimaltrajectories)
+
+        
+        
+
 
 
 
