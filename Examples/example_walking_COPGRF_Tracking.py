@@ -64,14 +64,14 @@ sys.path.append(opensimADDir)
 
 from utilsOpenSimAD import processInputsOpenSimAD, plotResultsOpenSimAD, createOpenCapFolderStructure
 from mainOpenSimAD import run_tracking
+#from mainOpenSimAD_FTHack import run_tracking
 from utilsAuthentication import get_token
 from utilsProcessing import segment_gait, getCOP_masks, map_stance_phase
 from utils import get_trial_id, download_trial
 from utilsKineticsOpenSimAD import kineticsOpenSimAD
 from utilsPlotting import plot_dataframe
-
-os.chdir("C:\\Users\\MoBL3\\Documents\\GRF_Project\\Optimize_Feet")
-from gait_analysis import process_gait_data
+from scipy.ndimage import label
+from gait_analysis_emily import process_gait_data
 
 # OpenCap authentication. Visit https://app.opencap.ai/login to create an
 # account if you don't have one yet.
@@ -100,7 +100,7 @@ subjects = ['2']
 for subject in subjects:
     for walking_trial in trials:
 
-        try:
+        # try:
 
             
                 if subject == '11':
@@ -181,9 +181,26 @@ for subject in subjects:
         
                 settings = processInputsOpenSimAD(
                     baseDir, dataFolder, session_id, trial_name, sim_setting_name, 
-                    time_window=time_window, stiffness=stiffness, treadmill_speed=treadmill_speed)
+                    time_window=time_window, stiffness=stiffness, treadmill_speed=treadmill_speed,
+                    F_testing_var = True)
                 
                 #CoP_right_mask, CoP_left_mask = getCOP_masks(grf_path)
+                # get rid of any cop masks shorter than 10 time points (testing this, eventually add to process gait data function)
+                min_length = 10  # You can change this threshold as needed
+
+                # Right mask
+                labeled_r, num_r = label(CoP_right_mask)
+                for i in range(1, num_r + 1):
+                    region = (labeled_r == i)
+                    if np.sum(region) < min_length:
+                        CoP_right_mask[region] = 0
+                
+                # Left mask
+                labeled_l, num_l = label(CoP_left_mask)
+                for i in range(1, num_l + 1):
+                    region = (labeled_l == i)
+                    if np.sum(region) < min_length:
+                        CoP_left_mask[region] = 0
                 
                 settings['CoP_mask']["right"] = CoP_right_mask
                 settings['CoP_mask']["left"] = CoP_left_mask
@@ -193,40 +210,60 @@ for subject in subjects:
         
 
 
-                case = 'Mocap IK newFT IDWeights cop10 pos1000 CE0 Acc pelvistrack100' # Name case based on stiffness value
+            # Name case based on stiffness value
                 settings['weights']['copMonotonicTerm'] = 0
                 settings['weights']['copAccelerationTerm'] = 0
                 settings['weights']['contrainCOPX_to_footMarkers'] = 0;
-                settings['weights']['copTrackingTerm'] = 10
+                settings['weights']['copTrackingTerm'] = 1000
                 
                 settings['weights']['grfTrackingTerm'] = 0.001             
                 settings['weights']['positionTrackingTerm'] = 1000
                 settings['torque_driven_model']  =  True
+                settings['ipopt_tolerance'] = 3
+                
 
                 
                 # Edits to try to make this close to ID
-                settings['weights']['accelerationTrackingTerm'] = 0.1
+                settings['weights']['accelerationTrackingTerm'] = 0
+                settings['weights']['velocityTrackingTerm'] = 0
                 settings['weights']['pelvisResidualsTerm'] = 0.0000001
                 settings[ 'allowPelvisResiduals'] = True
                 settings['weights']['activationTerm'] = 0.00001
-                settings['weights']['coordinateExcitationTerm'] = 0
-                settings['weights']['jointAccelerationTerm'] =0
-                settings['coordinates_toTrack']['lumbar_extension']['weight'] = 5
-                settings['coordinates_toTrack']['lumbar_bending']['weight'] = 5
-                settings['coordinates_toTrack']['lumbar_rotation']['weight'] = 5
-                
-                settings['coordinates_toTrack']['pelvis_tx']['weight'] = 100
-                settings['coordinates_toTrack']['pelvis_ty']['weight'] = 100
-                settings['coordinates_toTrack']['pelvis_tz']['weight'] = 100
+                #settings['weights']['coordinateExcitationTerm'] = 0
+                #settings['weights']['jointAccelerationTerm'] =0
+                # settings['coordinates_toTrack']['lumbar_extension']['weight'] = 5
+                # settings['coordinates_toTrack']['lumbar_bending']['weight'] = 5
+                # settings['coordinates_toTrack']['lumbar_rotation']['weight'] = 5
+                # settings['coordinates_toTrack']['knee_angle_l']['weight'] = 750
+                # settings['coordinates_toTrack']['knee_angle_r']['weight'] = 750
+                # settings['coordinates_toTrack']['pelvis_tx']['weight'] = 750
 
-            
-                # % Run the dynamic simulation.
-                run_tracking(baseDir, dataFolder, session_id, settings, foot_positions, case=case)
+                Iter = [1, 5] + list(range(10, 101, 10)) + list(range(150, 700, 50)) + [765]
+
+                Iter = [1, 5] + list(range(10, 101, 10)) + [200, 1000, 2000]
                 
-                # Plot results.
-                plotResultsOpenSimAD(dataFolder, session_id, trial_name, settings, [case])
-        except:
-            print('Errored')
+   
+                for iter_val in Iter:
+                    case = f'Mocap IK FTest reg_w1 iter {iter_val}'
+                    settings['maxIter'] = iter_val
+                    if 'foot_torque_actuator' not in settings:
+                        settings['foot_torque_actuator'] = {}
+                    
+                    if 'all' not in settings['foot_torque_actuator']:
+                        settings['foot_torque_actuator']['all'] = {}
+                    
+                    settings['foot_torque_actuator']['all']['weight'] = 1
+                
+                    
+                    # % Run the dynamic simulation.
+                    run_tracking(baseDir, dataFolder, session_id, settings, foot_positions, case=case)
+                    
+                    # Plot results.
+                    plotResultsOpenSimAD(dataFolder, session_id, trial_name, settings, [case])
+                    
+     
+        # except:
+        #     print('Errored')
                 
 
 

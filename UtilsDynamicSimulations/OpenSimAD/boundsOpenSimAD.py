@@ -345,4 +345,5 @@ class bounds_tracking:
         torque_labels = ['r_x', 'r_z', 'l_x', 'l_z']
         upper = pd.DataFrame(scaling * max_torque, index=[0], columns=torque_labels)
         lower = pd.DataFrame(-scaling * max_torque, index=[0], columns=torque_labels)
+        
         return upper, lower, scaling

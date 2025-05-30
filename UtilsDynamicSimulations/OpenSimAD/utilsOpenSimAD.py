@@ -572,7 +572,7 @@ def generateExternalFunction(
         treadmill=False, build_externalFunction=True, verifyID=True, 
         externalFunctionName='F', overwrite=True, 
         useExpressionGraphFunction=True, contact_side='all',
-        F_testing = True): # EYM_edit for testing
+        F_testing = False): # EYM_edit for testing
 
     # %% Process settings.
     pathCWD = os.getcwd()
@@ -1370,11 +1370,11 @@ def generateExternalFunction(
         
         if F_testing:
             f.write('\t/// Insert foot torques.\n')
-            f.write('\tSpatialVec torque_r, torque_l;\n')
-            f.write('\ttorque_r[0] = Vec3(0);\n')
-            f.write('\ttorque_r[1] = Vec3(footTorque[0], 0, footTorque[1]);  // Right foot x and z\n')
-            f.write('\ttorque_l[0] = Vec3(0);\n')
-            f.write('\ttorque_l[1] = Vec3(footTorque[2], 0, footTorque[3]);  // Left foot x and z\n')
+            f.write('\tSpatialVec torque_r, torque_l;\n')            
+            f.write('\ttorque_r[0] = Vec3(footTorque[0], 0, footTorque[1]);  // Right foot x and z\n')
+            f.write('\ttorque_r[1] = Vec3(0);\n')
+            f.write('\ttorque_l[0] = Vec3(footTorque[2], 0, footTorque[3]);  // Left foot x and z\n')
+            f.write('\ttorque_l[1] = Vec3(0);\n')
             f.write('\n')
             f.write('\tint c_idx_r = model->getBodySet().get("calcn_r").getMobilizedBodyIndex();\n')
             f.write('\tint c_idx_l = model->getBodySet().get("calcn_l").getMobilizedBodyIndex();\n')
@@ -1475,8 +1475,8 @@ def generateExternalFunction(
             f.write('\t/// Add actuator torques to GRMs\n')
             f.write('\tVec3 footTorque_r(footTorque[0], 0, footTorque[1]);  // Right foot x, z torque\n')  
             f.write('\tVec3 footTorque_l(footTorque[2], 0, footTorque[3]);  // Left foot x, z torque\n') 
-            f.write('\t///GRM_r += footTorque_r;\n') 
-            f.write('\t///GRM_l += footTorque_l;\n') 
+            f.write('\tGRM_r += footTorque_r;\n') 
+            f.write('\tGRM_l += footTorque_l;\n') 
             f.write('\n') 
         
         
@@ -2377,7 +2377,8 @@ def plotResultsOpenSimAD(dataDir, subject, motion_filename, settings,
 def processInputsOpenSimAD(baseDir, dataFolder, session_id, trial_name,
                            motion_type, time_window=[], repetition=None,
                            treadmill_speed=0, contact_side='all',
-                           overwrite=False, stiffness = 1000000, useExpressionGraphFunction=True):
+                           overwrite=False, stiffness = 1000000, useExpressionGraphFunction=True,
+                           F_testing_var = False):
         
     # Path session folder.
     sessionFolder =  os.path.join(dataFolder, session_id)
@@ -2415,7 +2416,8 @@ def processInputsOpenSimAD(baseDir, dataFolder, session_id, trial_name,
                              overwrite=True, 
                              treadmill=bool(treadmill_speed),
                              contact_side=contact_side,
-                             useExpressionGraphFunction=useExpressionGraphFunction)
+                             useExpressionGraphFunction=useExpressionGraphFunction,
+                             F_testing = F_testing_var)
     
     # Get settings.
     settings = get_setup(motion_type)

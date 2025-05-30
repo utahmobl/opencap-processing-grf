@@ -64,6 +64,7 @@ sys.path.append(opensimADDir)
 
 from utilsOpenSimAD import processInputsOpenSimAD, plotResultsOpenSimAD, createOpenCapFolderStructure
 from mainOpenSimAD import run_tracking
+#from mainOpenSimAD_FTHack import run_tracking
 from utilsAuthentication import get_token
 from utilsProcessing import segment_gait, getCOP_masks, map_stance_phase
 from utils import get_trial_id, download_trial
@@ -180,7 +181,8 @@ for subject in subjects:
         
                 settings = processInputsOpenSimAD(
                     baseDir, dataFolder, session_id, trial_name, sim_setting_name, 
-                    time_window=time_window, stiffness=stiffness, treadmill_speed=treadmill_speed)
+                    time_window=time_window, stiffness=stiffness, treadmill_speed=treadmill_speed,
+                    F_testing_var = True)
                 
                 #CoP_right_mask, CoP_left_mask = getCOP_masks(grf_path)
                 # get rid of any cop masks shorter than 10 time points (testing this, eventually add to process gait data function)
@@ -212,7 +214,7 @@ for subject in subjects:
                 settings['weights']['copMonotonicTerm'] = 0
                 settings['weights']['copAccelerationTerm'] = 0
                 settings['weights']['contrainCOPX_to_footMarkers'] = 0;
-                settings['weights']['copTrackingTerm'] = 100
+                settings['weights']['copTrackingTerm'] = 1000
                 
                 settings['weights']['grfTrackingTerm'] = 0.001             
                 settings['weights']['positionTrackingTerm'] = 1000
@@ -237,10 +239,20 @@ for subject in subjects:
                 # settings['coordinates_toTrack']['pelvis_tx']['weight'] = 750
 
                 Iter = [1, 5] + list(range(10, 101, 10)) + list(range(150, 700, 50)) + [765]
-                Iter = [1]
+
+                Iter = [1, 5] + list(range(10, 101, 10)) + [200]
+                
+                Iter = [2000, 5000]
                 for iter_val in Iter:
-                    case = f'Mocap IK v2 iter {iter_val}'
+                    case = f'Mocap IK FTest iter {iter_val}'
                     settings['maxIter'] = iter_val
+                    # if 'foot_torque_actuator' not in settings:
+                    #     settings['foot_torque_actuator'] = {}
+                    
+                    # if 'all' not in settings['foot_torque_actuator']:
+                    #     settings['foot_torque_actuator']['all'] = {}
+                    
+                    # settings['foot_torque_actuator']['all']['weight'] = 1e-6
                 
                     
                     # % Run the dynamic simulation.
@@ -248,6 +260,8 @@ for subject in subjects:
                     
                     # Plot results.
                     plotResultsOpenSimAD(dataFolder, session_id, trial_name, settings, [case])
+                    
+     
         # except:
         #     print('Errored')
                 

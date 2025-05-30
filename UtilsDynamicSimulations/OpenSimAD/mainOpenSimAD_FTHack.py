@@ -283,6 +283,8 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
         # Include a torque actuator between ground and foot to help tracking of COP
         foot_torque_actuator = True
         foot_torque_names = ['torque_r_x', 'torque_r_z', 'torque_l_x', 'torque_l_z']
+        weights['foot_torque_actuator'] = settings['foot_torque_actuator']['all']['weight']
+
 
                 
     # Set filter_grfs_toTrack to True to filter the ground reaction forces
@@ -1225,9 +1227,9 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
     if treadmill:
         F_name += '_treadmill'
         dim += 1
-    if foot_torque_actuator:
-        F_name += '_test'
-        dim += 4
+    # if foot_torque_actuator:
+    #     F_name += '_test'
+    #     dim += 4
     if contact_side != 'all':
         F_name += '_{}'.format(contact_side)
     if useExpressionGraphFunction:
@@ -1455,7 +1457,7 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
             lw['rActk'][c_j] = ca.vec(lw['rAct'][c_j].to_numpy().T * np.ones((1, N))).full()      
     # Foot torque actuators.
     if foot_torque_actuator:
-        uw['FootTorque'], lw['FootTorque'], scaling['FootTorque'] = bounds.getBoundsFootTorqueActuator(max_torque=1000) # EYM edit need to delete
+        uw['FootTorque'], lw['FootTorque'], scaling['FootTorque'] = bounds.getBoundsFootTorqueActuator(max_torque=1000) 
         uw['FootTorquek'] = ca.vec(uw['FootTorque'].to_numpy().T * np.ones((1, N))).full()
         lw['FootTorquek'] = ca.vec(lw['FootTorque'].to_numpy().T * np.ones((1, N))).full()
     # Static parameters.
@@ -1521,13 +1523,9 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
             w0['rAct'][c_j] = guess.getGuessReserveActuators(c_j)
             
     if foot_torque_actuator:
-        # Foot torque actuators.
-        # TODO IMPLEMENT THIS CORRECTLY
-        if 'FootTorque' not in w0:
-            w0['FootTorque'] = {}  # Initialize it as an empty dictionary
-    
-        guessTorque = pd.DataFrame()
+        # Foot torque actuators. Guess start at zero
         guessTorque = ([0] * N)  
+        w0['FootTorque'] = {}
         for torque in foot_torque_names:
             w0['FootTorque'][torque] = guessTorque
 
@@ -1851,20 +1849,19 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
                 assert np.all(lw['rActk'][c_j] <= ca.vec(w0['rAct'][c_j].to_numpy().T).full()), "Issue with lower bound reserve actuators"
                 assert np.all(uw['rActk'][c_j] >= ca.vec(w0['rAct'][c_j].to_numpy().T).full()), "Issue with upper bound reserve actuators"
         # Foot torque actuators.
+        # Foot torque actuators.
         if foot_torque_actuator:
-            foot_torque_names = np.array(foot_torque_names) 
-            footTorque = opti.variable(foot_torque_names.shape[0], N)
+            footTorque = opti.variable(len(foot_torque_names), N)
             opti.subject_to(opti.bounded(lw['FootTorquek'], ca.vec(footTorque), uw['FootTorquek']))
+        
+            # Stack initial values from dictionary into (4, N) array
+            footTorque_init = np.vstack([w0['FootTorque'][k] for k in foot_torque_names])
             
-            # Reshape footTorque_values to match the required shape (4, N)
-            footTorque_values = np.array(list(w0['FootTorque'].values()))
-            footTorque_values = np.reshape(footTorque_values, (4, N))  # Make it (4, N)
-            
-            opti.set_initial(footTorque, footTorque_values) 
-            
-            # Remove the .to_numpy() method since it's not available for dictionaries
-            assert np.all(lw['FootTorquek'] <= ca.vec(footTorque_values).full()), "Issue with lower bound foot torque actuators"
-            assert np.all(uw['FootTorquek'] >= ca.vec(footTorque_values).full()), "Issue with upper bound foot torque actuators"
+            opti.set_initial(footTorque, footTorque_init)
+        
+            assert np.all(lw['FootTorquek'] <= ca.vec(footTorque_init)), "Issue with lower bound foot torque actuators"
+            assert np.all(uw['FootTorquek'] >= ca.vec(footTorque_init)), "Issue with upper bound foot torque actuators"
+
             
         # %% Plots initial guess vs bounds.
         plotGuessVsBounds = False
@@ -2035,11 +2032,11 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
                     ca.vertcat(QsQdskj_nsc[:, 0],
                                Qddsk_nsc[idxJoints4F]),
                     -settings['treadmill_speed']))
-            elif foot_torque_actuator:
-                Tk = F(ca.vertcat(
-                    ca.vertcat(QsQdskj_nsc[:, 0],
-                               Qddsk_nsc[idxJoints4F]),
-                    footTorque[:, k]))
+            # elif foot_torque_actuator:
+            #     Tk = F(ca.vertcat(
+            #         ca.vertcat(QsQdskj_nsc[:, 0],
+            #                    Qddsk_nsc[idxJoints4F]),
+            #         footTorque[:, k]))
             else:
                 Tk = F(ca.vertcat(QsQdskj_nsc[:, 0], 
                                    Qddsk_nsc[idxJoints4F]))
@@ -2191,6 +2188,21 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
                             side = 'right' if leg == 'r' else 'left'
                             GRF_k = Tk[idx_grf_forCOP[leg], 0]  # (3,)
                             GRM_k = Tk[idx_grm_forCOP[leg], 0]  # (3,)
+                            
+                            if foot_torque_actuator:    
+                            # Reminder: foot_torque_names = ['torque_r_x', 'torque_r_z', 'torque_l_x', 'torque_l_z']                                    
+                                if leg == 'r':      
+                                    GRM_k[0] += footTorque[0, k] # only x moment implemented here      
+                                    GRM_k[2] += footTorque[1, k] # only z moment implemented here
+                                if leg == 'l':      
+                                    GRM_k[0] += footTorque[2, k] # only x moment implemented here      
+                                    GRM_k[2] += footTorque[3, k] # only z moment implemented here                       
+                            
+                            
+                            
+                            
+                            
+                            
                             COP_k = f_getCOP(GRF_k, GRM_k).T    # (1, 3)
                             COP_leg_all[leg][k, :] = COP_k
                         
@@ -2270,10 +2282,13 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
                         Tk[idxGroundPelvisJointsinF, 0], w_pelvis_residuals)
                     J += (weights['pelvisResidualsTerm'] * 
                           pelvisResidualsTerm * h * B[j + 1])
-                    
-                #Penalize foot torque slightly:
+                
+                
                 if foot_torque_actuator:
-                    J += 1e-6 * ca.sumsqr(footTorque[:, k]) * h * B[j + 1]
+                    J += weights['foot_torque_actuator'] * ca.sumsqr(footTorque[:, k]) * h * B[j + 1]
+
+                    
+                 
 
                         
 
@@ -2568,9 +2583,8 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
                 starti = starti + 1*(N)
         
         if foot_torque_actuator:
-            footTorque_opt = (
-                np.reshape(w_opt[starti:starti+4*N], (N, 4))).T
-            starti = starti + foot_torque_names.shape[0]*N
+            footTorque_opt = (np.reshape(w_opt[starti:starti+4*N], (N, 4))).T
+            starti = starti + 4*N
             
         assert (starti == w_opt.shape[0]), "error when extracting results"
         
@@ -2663,10 +2677,10 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
             Tj_temp = F(ca.vertcat(
                 ca.vertcat(QsQds_opt_nsc[:, 0], Qdds_opt_nsc_4F[:, 0]), 
                 -settings['treadmill_speed']))
-        elif foot_torque_actuator:
-            Tj_temp = F(ca.vertcat(
-                ca.vertcat(QsQds_opt_nsc[:, 0], Qdds_opt_nsc_4F[:, 0]), 
-                footTorque_opt[:, 0]))
+        # elif foot_torque_actuator:
+        #     Tj_temp = F(ca.vertcat(
+        #         ca.vertcat(QsQds_opt_nsc[:, 0], Qdds_opt_nsc_4F[:, 0]), 
+        #         footTorque_opt[:, 0]))
         else:
             Tj_temp = F(ca.vertcat(QsQds_opt_nsc[:, 0], Qdds_opt_nsc_4F[:, 0]))          
         F_out_pp = np.zeros((Tj_temp.shape[0], N))
@@ -2679,10 +2693,10 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
                 Tk = F(ca.vertcat(
                     ca.vertcat(QsQds_opt_nsc[:, k], Qdds_opt_nsc_4F[:, k]), 
                     -settings['treadmill_speed']))
-            elif foot_torque_actuator:
-                Tk = F(ca.vertcat(
-                    ca.vertcat(QsQds_opt_nsc[:, k], Qdds_opt_nsc_4F[:, k]), 
-                    footTorque_opt[:, k]))                
+            # elif foot_torque_actuator:
+            #     Tk = F(ca.vertcat(
+            #         ca.vertcat(QsQds_opt_nsc[:, k], Qdds_opt_nsc_4F[:, k]), 
+            #         footTorque_opt[:, k]))                
             else:
                 Tk = F(ca.vertcat(QsQds_opt_nsc[:, k], Qdds_opt_nsc_4F[:, k]))
             F_out_pp[:, k] = Tk.full().T
@@ -2711,6 +2725,18 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
         for c_s, side in enumerate(contactSides):
             GRF_all_opt[side] = F_out_pp[idxGR['GRF']['all'][side], :]
             GRM_all_opt[side] = F_out_pp[idxGR['GRM']['all'][side], :]
+            
+            
+            # TODO DELETE THIS ONCE WE PUT THE TORQUE ACTUATOR INTO F.cpp
+            # add extra foot torque to COP computation
+            # footTorque_opt has shape (4, N): [r_x, r_z, l_x, l_z]
+            if side == 'right':
+                GRM_all_opt[side][0, :] += footTorque_opt[c_s * 2, :]     # x torque to GRM x
+                GRM_all_opt[side][2, :] += footTorque_opt[c_s * 2 + 1, :] # z torque to GRM z
+            elif side == 'left':
+                GRM_all_opt[side][0, :] += footTorque_opt[c_s * 2, :]     # x torque to GRM x
+                GRM_all_opt[side][2, :] += footTorque_opt[c_s * 2 + 1, :] # z torque to GRM z
+            # # END TODO
 
             
             COP_all_opt[side], freeT_all_opt[side] = getCOP(
@@ -2904,6 +2930,8 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
             pelvisResidualsTrackingTerm_opt_all = 0
         if withReserveActuators:    
             reserveActuatorTerm_opt_all = 0
+        if foot_torque_actuator:
+            footTorqueActuatorTerm_opt_all = 0    
         if min_ratio_vGRF and weights['vGRFRatioTerm'] > 0:
             vGRFRatioTerm_opt_all = 0
         if not torque_driven_model:
@@ -3141,6 +3169,11 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
                         vGRF_ratio_opt = np.sqrt(vGRF_front_opt/vGRF_rear_opt) 
                         vGRFRatioTerm_opt_all += (weights['vGRFRatioTerm'] * vGRF_ratio_opt * h * B[j + 1])                    
 
+                
+                if foot_torque_actuator:
+                    footTorqueActuatorTerm_opt_all  += weights['foot_torque_actuator'] * ca.sumsqr(footTorque_opt[:, k]) * h * B[j + 1]
+
+                    
 
 
 
@@ -3161,6 +3194,9 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
             JMotor_opt += vGRFRatioTerm_opt_all
         if withReserveActuators:    
             JMotor_opt += reserveActuatorTerm_opt_all
+        
+        if foot_torque_actuator:
+            JMotor_opt += footTorqueActuatorTerm_opt_all.full()
 
         # Tracking terms.
         JTrack_opt = (positionTrackingTerm_opt_all.full() +  
@@ -3448,75 +3484,41 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
                     os.path.join(pathResults, 'optimaltrajectories.npy'),
                     allow_pickle=True)   
             optimaltrajectories = optimaltrajectories.item()
-        if foot_torque_actuator:
-            optimaltrajectories[case] = {
-                'coordinate_values_toTrack': refData_offset_nsc,
-                'coordinate_values': Qs_opt_nsc,
-                'coordinate_speeds_toTrack': refData_Qds_nsc,
-                'coordinate_speeds': Qds_opt_nsc, 
-                'coordinate_accelerations_toTrack': refData_Qdds_nsc,
-                'coordinate_accelerations': Qdds_opt_nsc,
-                'torques': torques_opt,
-                'torques_BWht': torques_BWht_opt,
-                'powers': powers_opts,
-                'GRF': GRF_all_opt['all'],
-                'GRF_BW': GRF_BW_all_opt,
-                'GRM': GRM_all_opt['all'],
-                'GRM_BWht': GRM_BWht_all_opt,
-                'COP': COP_all_opt['all'],
-                'Mocap_COPs': Mocap_Cops,
-                'FootTorque': footTorque_opt,
-                'COP_r_indices': COP_r_indices,
-                'COP_l_indices': COP_l_indices,
-                'freeM': freeT_all_opt['all'],
-                'coordinates': joints,
-                'coordinates_power': poweredJoints,
-                'rotationalCoordinates': rotationalJoints,
-                'GRF_labels': GRF_labels_fig,
-                'GRM_labels': GRM_labels_fig,
-                'COP_labels': COP_labels_fig,
-                'time': tgridf,
-                'muscles': bothSidesMuscles,
-                'passive_limit_torques': pT_opt,
-                'muscle_driven_joints': muscleDrivenJoints,
-                'limit_torques_joints': passiveTorqueJoints,
-                'GRF_tracking_term': grfTrackingTerm_opt_all.full()[0][0],
-                'Position_tracking_term': positionTrackingTerm_opt_all.full()[0][0],
-                'COP_tracking_term': copTrackingTerm_opt_all.full()[0][0],
-                'J_All_terms': JAll_opt[0][0]}
-        else:
-            optimaltrajectories[case] = {
-                'coordinate_values_toTrack': refData_offset_nsc,
-                'coordinate_values': Qs_opt_nsc,
-                'coordinate_speeds_toTrack': refData_Qds_nsc,
-                'coordinate_speeds': Qds_opt_nsc, 
-                'coordinate_accelerations_toTrack': refData_Qdds_nsc,
-                'coordinate_accelerations': Qdds_opt_nsc,
-                'torques': torques_opt,
-                'torques_BWht': torques_BWht_opt,
-                'powers': powers_opts,
-                'GRF': GRF_all_opt['all'],
-                'GRF_BW': GRF_BW_all_opt,
-                'GRM': GRM_all_opt['all'],
-                'GRM_BWht': GRM_BWht_all_opt,
-                'COP': COP_all_opt['all'],
-                'COP_r_indices': COP_r_indices,
-                'COP_l_indices': COP_l_indices,
-                'freeM': freeT_all_opt['all'],
-                'coordinates': joints,
-                'coordinates_power': poweredJoints,
-                'rotationalCoordinates': rotationalJoints,
-                'GRF_labels': GRF_labels_fig,
-                'GRM_labels': GRM_labels_fig,
-                'COP_labels': COP_labels_fig,
-                'time': tgridf,
-                'muscles': bothSidesMuscles,
-                'passive_limit_torques': pT_opt,
-                'muscle_driven_joints': muscleDrivenJoints,
-                'limit_torques_joints': passiveTorqueJoints,
-                'GRF_tracking_term': grfTrackingTerm_opt_all.full()[0][0],
-                'Position_tracking_term': positionTrackingTerm_opt_all.full()[0][0],
-                'J_All_terms': JAll_opt[0][0]}
+        optimaltrajectories[case] = {
+            'coordinate_values_toTrack': refData_offset_nsc,
+            'coordinate_values': Qs_opt_nsc,
+            'coordinate_speeds_toTrack': refData_Qds_nsc,
+            'coordinate_speeds': Qds_opt_nsc, 
+            'coordinate_accelerations_toTrack': refData_Qdds_nsc,
+            'coordinate_accelerations': Qdds_opt_nsc,
+            'torques': torques_opt,
+            'torques_BWht': torques_BWht_opt,
+            'powers': powers_opts,
+            'GRF': GRF_all_opt['all'],
+            'GRF_BW': GRF_BW_all_opt,
+            'GRM': GRM_all_opt['all'],
+            'GRM_BWht': GRM_BWht_all_opt,
+            'COP': COP_all_opt['all'],
+            'Mocap_COPs': Mocap_Cops,
+            'FootTorque': footTorque_opt,
+            'COP_r_indices': COP_r_indices,
+            'COP_l_indices': COP_l_indices,
+            'freeM': freeT_all_opt['all'],
+            'coordinates': joints,
+            'coordinates_power': poweredJoints,
+            'rotationalCoordinates': rotationalJoints,
+            'GRF_labels': GRF_labels_fig,
+            'GRM_labels': GRM_labels_fig,
+            'COP_labels': COP_labels_fig,
+            'time': tgridf,
+            'muscles': bothSidesMuscles,
+            'passive_limit_torques': pT_opt,
+            'muscle_driven_joints': muscleDrivenJoints,
+            'limit_torques_joints': passiveTorqueJoints,
+            'GRF_tracking_term': grfTrackingTerm_opt_all.full()[0][0],
+            'Position_tracking_term': positionTrackingTerm_opt_all.full()[0][0],
+            'COP_tracking_term': copTrackingTerm_opt_all.full()[0][0],
+            'J_All_terms': JAll_opt[0][0]}
             
         if computeKAM:
             optimaltrajectories[case]['KAM'] = KAM
@@ -3552,6 +3554,8 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
                 
         np.save(os.path.join(pathResults, 'optimaltrajectories.npy'),
                 optimaltrajectories)
+        
+        return optimaltrajectories
 
         
         
