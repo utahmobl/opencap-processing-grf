@@ -70,8 +70,8 @@ from utils import get_trial_id, download_trial
 from utilsKineticsOpenSimAD import kineticsOpenSimAD
 from utilsPlotting import plot_dataframe
 
-# os.chdir("C:\\Users\\MoBL3\\Documents\\GRF_Project\\Optimize_Feet")
-from gait_analysis import process_gait_data
+from scipy.ndimage import label
+from gait_analysis_emily import process_gait_data
 
 # OpenCap authentication. Visit https://app.opencap.ai/login to create an
 # account if you don't have one yet.
