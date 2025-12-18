@@ -1,4 +1,4 @@
-# OpenCap Processing
+# OpenCap Processing GRF
 
 This repository enables the post-processing of human movement kinematics collected using [OpenCap](opencap.ai). You can run kinematic analyses, download multiple sessions using scripting, and run muscle-driven simulations to estimate kinetics. Building on the original OpenCap processing repository, this codebase implements the hybrid machine learning–simulation pipeline described in Miller et al., improving estimation of ground reaction forces, joint moments, and joint contact forces.
 
@@ -45,5 +45,6 @@ Uhlrich SD*, Falisse A*, Kidzinski L*, Ko M, Chaudhari AS, Hicks JL, Delp SL, 20
 ## Examples
 - Run `batchDownload_ForGRFTrack.py` for example of how download data and predict GRFs/COPs
 - Run `example_walking_opensimAD_GRF.py` for examples of how to generate hybrid simulations
+
 
 
