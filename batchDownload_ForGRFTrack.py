@@ -149,8 +149,8 @@ for session_id in sessionList:
          session_folder=session_folder,
          trial_prefix=trial_prefix,          
          gait_style=gait_style, 
-         trimming_start=4.5, # remove the first 4.5 seconds
-         trimming_end=0.5, # remove the last 0.4 seconds
+         trimming_start=0, # remove the first X seconds
+         trimming_end=0, # remove the last X seconds
      )     
 
         # ---------------------------------------------------------------------
