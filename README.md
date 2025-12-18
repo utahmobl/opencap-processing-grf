@@ -27,7 +27,7 @@ Uhlrich SD*, Falisse A*, Kidzinski L*, Ko M, Chaudhari AS, Hicks JL, Delp SL, 20
 5. (Optional): Install an IDE such as Spyder: `conda install spyder`
 6. Clone the repository to your machine: 
     - Navigate to the directory where you want to download the code: eg. `cd Documents`. Make sure there are no spaces in this path.
-    - Install git if you have not already: 'conda install -c conda-forge git'
+    - Install git if you have not already: `conda install -c conda-forge git`
     - Clone the repository: `git clone https://github.com/utahmobl/opencap-processing-grf.git`
     - Navigate to the directory: `cd opencap-processing-grf`
 7. Install required packages: `python -m pip install -r requirements.txt`
@@ -46,6 +46,7 @@ Uhlrich SD*, Falisse A*, Kidzinski L*, Ko M, Chaudhari AS, Hicks JL, Delp SL, 20
 ## Examples
 - Run `batchDownload_ForGRFTrack.py` for example of how download data and predict GRFs/COPs
 - Run `example_walking_opensimAD_GRF.py` for examples of how to generate hybrid simulations
+
 
 
 
