@@ -30,10 +30,7 @@ from gradio_client import Client, handle_file
 # -------------------------------------------------------------------------
 
 # Base directory for this repository (opencap-processing-grf folder)
-# For local use on the NAS:
-baseDir = r"Y:\Users\EMiller\GHRepos_For_Publication\opencap-processing-grf"
-# For general GitHub users, they can instead use:
-# baseDir = os.path.dirname(os.path.abspath(__file__))
+baseDir = os.path.dirname(os.path.abspath(__file__))
 
 # Make repo root importable
 sys.path.append(baseDir)
