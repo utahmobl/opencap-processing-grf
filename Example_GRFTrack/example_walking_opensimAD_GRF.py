@@ -170,6 +170,7 @@ settings['meshDensity'] = 50
 # Run the dynamic simulation.
 run_tracking(baseDir, dataFolder, session_id, settings, case=case)
 # Plot some results.
+# Comment plotResultsOpenSimAD out if running a loop to batch process data
 plotResultsOpenSimAD(dataFolder, session_id, trial_name, settings, [case])
 
 

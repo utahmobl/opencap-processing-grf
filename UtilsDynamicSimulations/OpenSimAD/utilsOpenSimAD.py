@@ -2027,7 +2027,14 @@ def plotResultsOpenSimAD(dataDir, subject, motion_filename, settings,
                    allow_pickle=True).item()    
     optimaltrajectories = {}
     for case in cases:
-        optimaltrajectories[case] = c_tr[case]
+        if case in c_tr:
+            optimaltrajectories[case] = c_tr[case]
+        elif case + '_NonConvergent' in c_tr:
+            optimaltrajectories[case] = c_tr[case + '_NonConvergent']
+        else:
+            raise KeyError(
+                f"Neither '{case}' nor '{case}_NonConvergent' found in optimal trajectories."
+            )
         
     colors = sns.color_palette('colorblind', len(cases))
 
