@@ -28,7 +28,7 @@ import opensim
 import numpy as np
 from scipy import signal
 import matplotlib.pyplot as plt
-from utils import storage_to_dataframe, download_trial, get_trial_id
+from utils import storage_to_dataframe
 import pandas as pd
 
 def lowPassFilter(time, data, lowpass_cutoff_frequency, order=4):

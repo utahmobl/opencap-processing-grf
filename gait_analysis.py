@@ -18,22 +18,10 @@
     limitations under the License.
 """
  
-import sys
-import os
-
-# base_path = r"C:/Users/MoBL3/Documents/opencap-processing/"
-# sys.path.append(base_path)  # Add the base path explicitly
-# # Append all folders in the base directory to sys.path
-# for folder in os.listdir(base_path):
-#     folder_path = os.path.join(base_path, folder)
-#     if os.path.isdir(folder_path):  # Check if it's a directory
-#         sys.path.append(folder_path)
 
 import numpy as np
-import copy
-import pandas as pd
 from scipy.signal import find_peaks
-from matplotlib import pyplot as plt
+
 
 from utilsKinematics_GRF import kinematics
 # % Paths.
