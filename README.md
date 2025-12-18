@@ -44,8 +44,9 @@ Uhlrich SD*, Falisse A*, Kidzinski L*, Ko M, Chaudhari AS, Hicks JL, Delp SL, 20
 
     
 ## Examples
-- Run `batchDownload_ForGRFTrack.py` for example of how download data and predict GRFs/COPs
+- Run `batchDownload_ForGRFTrack.py` for example of how to download data and predict GRFs/COPs
 - Run `example_walking_opensimAD_GRF.py` for examples of how to generate hybrid simulations
+
 
 
 
