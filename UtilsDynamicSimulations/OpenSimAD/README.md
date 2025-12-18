@@ -51,10 +51,10 @@ We recommend starting with `example_kinetics.py` to see how to run dynamic simul
       - KAM_labels: labels of knee adduction moments.
       - MCF_labels: labels of medial knee contact fprces.
       - iter_count: number of iterations the problem took to converge.
- - Folder: Results_{case_name}
-    - Folder with csvs of results contained in optimaltrajectories.npy
-  - Results.mat
-    - .mat file of results contained in optimaltrajectories.npy   
+   - Folder: Results_<trial_name>
+      - Folder with csvs of results contained in optimaltrajectories.npy
+    - Results.mat
+      - .mat file of results contained in optimaltrajectories.npy   
 
 ### Overview files
 - `boundsOpenSimAD.py`: script describing the bounds of the problem variables.
@@ -71,5 +71,6 @@ We recommend starting with `example_kinetics.py` to see how to run dynamic simul
 ### Food for thought / Tips & Tricks
 
 Dynamic simulations of human movement require solving complex optimal control problems. **It is a tedious task with no guarantee of success.** Even if the problem converges (*optimal solution found*), you should always verify that the results are biomechanically meaningful. It is possible that the problem satisfied all constraints but did not converge to the expected solution. You might want to play with the settings (eg, weights of the different terms in the cost function), constraints, and cost function terms to generate simulations that make sense for the particular activity you are interested in. We have gathered some [tips and tricks](https://docs.google.com/document/d/1zgF9PqOaSZHma3vdQnccHz6mc7Fv6AG3fHLNLh4TQuA/edit) in this document.
+
 
 
