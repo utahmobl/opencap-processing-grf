@@ -73,8 +73,9 @@ def interpolateNumpyArray_time(data, time, tIn, tEnd, N):
     return dataInterp 
 
 # %% Solve problem with bounds instead of constraints.
-def solve_with_bounds(opti, tolerance, useExpressionGraphFunction, maxIter):
+def solve_with_bounds(opti, tolerance, useExpressionGraphFunction, maxIter, pathResults, case):
     
+
     # Get guess.
     guess = opti.debug.value(opti.x, opti.initial())
     # Sparsity pattern of the constraint Jacobian.
@@ -130,6 +131,7 @@ def solve_with_bounds(opti, tolerance, useExpressionGraphFunction, maxIter):
     uub = ubg[not_idx_is_simple]
     
     prob = {'x': opti.x, 'f': opti.f, 'g': new_g}
+
     s_opts = {}
     if useExpressionGraphFunction:
         s_opts["expand"] = True
@@ -138,7 +140,16 @@ def solve_with_bounds(opti, tolerance, useExpressionGraphFunction, maxIter):
     s_opts["ipopt.hessian_approximation"] = "limited-memory"
     s_opts["ipopt.mu_strategy"] = "adaptive"
     s_opts["ipopt.max_iter"] = maxIter
-    s_opts["ipopt.tol"] = 10**(-tolerance)     
+    s_opts["ipopt.tol"] = 10**(-tolerance) 
+    s_opts["ipopt.output_file"] = os.path.join(pathResults, 'ipopt_debug_{}.log'.format(case))  
+    
+    # Suggestions to improve convergence
+    # s_opts["ipopt.expect_infeasible_problem"] = "yes"
+    # s_opts["ipopt.required_infeasibility_reduction"] = 1e-4
+    # s_opts["ipopt.dual_inf_tol"] = 1e-1
+    # s_opts["ipopt.bound_push"] = 1e-6
+    # s_opts["ipopt.bound_frac"] = 1e-6
+    
     
     solver = ca.nlpsol("solver", "ipopt", prob, s_opts)
     # Solve.
@@ -441,7 +452,12 @@ def interpolateDataFrame(dataFrame, tIn, tEnd, N):
     tOut = np.linspace(np.round(tIn,6), np.round(tEnd,6), N)    
     dataInterp = pd.DataFrame() 
     for i, col in enumerate(dataFrame.columns):
-        set_interp = interp1d(np.round(dataFrame['time'],6), dataFrame[col])        
+        set_interp = interp1d(
+            np.round(dataFrame['time'], 6),
+            dataFrame[col],
+            bounds_error=False,
+            fill_value='extrapolate'
+        )      
         dataInterp.insert(i, col, set_interp(tOut))
         
     return dataInterp
@@ -572,7 +588,7 @@ def generateExternalFunction(
         treadmill=False, build_externalFunction=True, verifyID=True, 
         externalFunctionName='F', overwrite=True, 
         useExpressionGraphFunction=True, contact_side='all',
-        F_testing = False): # EYM_edit for testing
+        useFootTorque = False): 
 
     # %% Process settings.
     pathCWD = os.getcwd()
@@ -592,8 +608,8 @@ def generateExternalFunction(
         externalFunctionName += '_treadmill'
     if contact_side != 'all':
         externalFunctionName += '_' + contact_side
-    if F_testing:
-        externalFunctionName += '_test'
+    if useFootTorque:
+        externalFunctionName += '_foottorque'
         
     pathOutputFile = os.path.join(pathOutputExternalFunctionFolder, 
                                   externalFunctionName + ".cpp")
@@ -688,7 +704,7 @@ def generateExternalFunction(
         f.write('using namespace SimTK;\n')
         f.write('using namespace OpenSim;\n\n')
     
-        if treadmill or F_testing:
+        if treadmill or useFootTorque:
             f.write('constexpr int n_in = 3; \n')
         else:
             f.write('constexpr int n_in = 2; \n')
@@ -1239,8 +1255,8 @@ def generateExternalFunction(
                     f.write('\t%s = new %s(\"%s\", *%s, %s);\n' % (c_force_elt.getName(), c_force_elt.getConcreteClassName(), c_force_elt.getName(), geo1_frameName, ground_contact))
                 else:
                     f.write('\t%s = new %s(\"%s\", *%s, *%s);\n' % (c_force_elt.getName(), c_force_elt.getConcreteClassName(), c_force_elt.getName(), geo1_frameName, geo0_frameName))
-                    
                 f.write('\tVec3 %s_location(%.20f, %.20f, %.20f);\n' % (c_force_elt.getName(), geo1_loc[0], geo1_loc[1], geo1_loc[2]))
+                   
                 f.write('\t%s->set_contact_sphere_location(%s_location);\n' % (c_force_elt.getName(), c_force_elt.getName()))
                 f.write('\tdouble %s_radius = (%.20f);\n' % (c_force_elt.getName(), geo1_radius))
                 f.write('\t%s->set_contact_sphere_radius(%s_radius );\n' % (c_force_elt.getName(), c_force_elt.getName()))
@@ -1285,7 +1301,7 @@ def generateExternalFunction(
         f.write('\tstd::vector<T> u(arg[1], arg[1] + NU);\n')
         if treadmill:
             f.write('\tstd::vector<T> p(arg[2], arg[2] + 1);\n')
-        if F_testing:
+        if useFootTorque:
             f.write('\t// Read in foot torque input.\n')
             f.write('\tstd::vector<T> footTorque(arg[2], arg[2] + 4); // [R_x, R_z, L_x, L_z]\n')  # 2 torques (x and z) per foot
         f.write('\n')
@@ -1368,12 +1384,14 @@ def generateExternalFunction(
                 f.write('\n')
                 
         
-        if F_testing:
+        if useFootTorque:
             f.write('\t/// Insert foot torques.\n')
             f.write('\tSpatialVec torque_r, torque_l;\n')            
-            f.write('\ttorque_r[0] = Vec3(footTorque[0], 0, footTorque[1]);  // Right foot x and z\n')
+            #f.write('\ttorque_r[0] = Vec3(footTorque[0], 0, footTorque[1]);  // Right foot x and z\n')
+            f.write('\ttorque_r[0] = Vec3(0, 0, footTorque[1]);  // Right foot z\n')
             f.write('\ttorque_r[1] = Vec3(0);\n')
-            f.write('\ttorque_l[0] = Vec3(footTorque[2], 0, footTorque[3]);  // Left foot x and z\n')
+           # f.write('\ttorque_l[0] = Vec3(footTorque[2], 0, footTorque[3]);  // Left foot x and z\n')
+            f.write('\ttorque_l[0] = Vec3(0, 0, footTorque[3]);  // Left foot z\n')
             f.write('\ttorque_l[1] = Vec3(0);\n')
             f.write('\n')
             f.write('\tint c_idx_r = model->getBodySet().get("calcn_r").getMobilizedBodyIndex();\n')
@@ -1471,7 +1489,7 @@ def generateExternalFunction(
                 count += 1
         
         
-        if F_testing:
+        if useFootTorque:
             f.write('\t/// Add actuator torques to GRMs\n')
             f.write('\tVec3 footTorque_r(footTorque[0], 0, footTorque[1]);  // Right foot x, z torque\n')  
             f.write('\tVec3 footTorque_l(footTorque[2], 0, footTorque[3]);  // Left foot x, z torque\n') 
@@ -1593,7 +1611,7 @@ def generateExternalFunction(
         f.write('\tRecorder u[NU];\n')
         if treadmill:
             f.write('\tRecorder p[1];\n') 
-        elif F_testing:
+        elif useFootTorque:
             f.write('\tRecorder footTorque[4];\n')
         f.write('\tRecorder tau[NR];\n')
         f.write('\tfor (int i = 0; i < NX; ++i) x[i] <<= 0;\n')
@@ -1601,7 +1619,7 @@ def generateExternalFunction(
         if treadmill:
             f.write('\tp[0] <<= 0;\n')
             f.write('\tconst Recorder* Recorder_arg[n_in] = { x,u,p };\n')
-        elif F_testing:
+        elif useFootTorque:
             f.write('\tfor (int i = 0; i < 4; ++i) footTorque[i] <<= 0;\n')  # INIT TORQUES
             f.write('\tconst Recorder* Recorder_arg[n_in] = { x,u,footTorque };\n')
         else:
@@ -1623,7 +1641,8 @@ def generateExternalFunction(
         buildExternalFunction(
             externalFunctionName, pathDCAD, pathOutputExternalFunctionFolder,
             3*nCoordinates, treadmill=treadmill, 
-            useExpressionGraphFunction=useExpressionGraphFunction)
+            useExpressionGraphFunction=useExpressionGraphFunction,
+            useFootTorque = useFootTorque)
         
     # %% Verification.
     if verifyID:
@@ -1684,7 +1703,7 @@ def generateExternalFunction(
         if treadmill:
             vec4 = np.zeros((1, 1))
             vec3 = np.concatenate((vec1,vec2,vec4))
-        elif F_testing:
+        elif useFootTorque:
             vec4 = np.zeros((4, 1))
             vec3 = np.concatenate((vec1,vec2,vec4))
         else:            
@@ -1744,6 +1763,24 @@ def generateF(dim, script_name):
     cg.add(F.jacobian())
     cg.generate()
     
+def generateF_foottorque(dim, script_name):
+    import importlib
+    foo_module = importlib.import_module(script_name)
+    importlib.reload(foo_module)
+
+    # Define CasADi function
+    cg = ca.CodeGenerator(script_name + '_jac')  # Optional, can be removed if not using
+    arg = ca.SX.sym('arg', dim)
+    y, _, _ = foo_module.foo(arg)
+    F = ca.Function('F', [arg], [y])
+
+    # Add function and its Jacobian to the generator
+    cg.add(F)
+    cg.add(F.jacobian())
+
+    # Actually generate script_name.py
+    cg.generate(script_name + '.py')
+    
 # %% Generate function from expression graph.
 def getF_expressingGraph(dim, script_name):
     foo_module = importlib.import_module(script_name)
@@ -1756,7 +1793,7 @@ def getF_expressingGraph(dim, script_name):
 # %% Compile external function.
 def buildExternalFunction(filename, pathDCAD, CPP_DIR, nInputs,
                           treadmill=False, useExpressionGraphFunction=True,
-                          F_testing = True):       
+                          useFootTorque = False):       
     
     # %% Part 1: build expression graph (i.e., generate foo.py).
     pathMain = os.getcwd()
@@ -1893,13 +1930,13 @@ def buildExternalFunction(filename, pathDCAD, CPP_DIR, nInputs,
         sys.path.append(pathBuildExternalFunction)
         os.chdir(pathBuildExternalFunction)
         
-        if treadmill and F_testing:
+        if treadmill and useFootTorque:
             # Trigger error message
-            raise ValueError("Error: treadmill and F_testing cannot both be True.")
+            raise ValueError("Error: treadmill and useFootTorque cannot both be True.")
         else:
             if treadmill:
                 generateF(nInputs+1, fooName)
-            elif F_testing:
+            elif useFootTorque:
                 generateF(nInputs+1, fooName)
             else:
                 generateF(nInputs, fooName)
@@ -2378,7 +2415,7 @@ def processInputsOpenSimAD(baseDir, dataFolder, session_id, trial_name,
                            motion_type, time_window=[], repetition=None,
                            treadmill_speed=0, contact_side='all',
                            overwrite=False, stiffness = 1000000, useExpressionGraphFunction=True,
-                           F_testing_var = False):
+                           FootTorque_Var = False):
         
     # Path session folder.
     sessionFolder =  os.path.join(dataFolder, session_id)
@@ -2417,7 +2454,7 @@ def processInputsOpenSimAD(baseDir, dataFolder, session_id, trial_name,
                              treadmill=bool(treadmill_speed),
                              contact_side=contact_side,
                              useExpressionGraphFunction=useExpressionGraphFunction,
-                             F_testing = F_testing_var)
+                             useFootTorque = FootTorque_Var)
     
     # Get settings.
     settings = get_setup(motion_type)
@@ -2502,37 +2539,6 @@ def adjustBoundsAndDummyMotion(polynomial_bounds, updated_bounds, pathDummyMotio
     
     return polynomial_bounds, pathAdjustedDummyMotion
 
-def createOpenCapFolderStructure(session_path, model_path_input, ik_path_input, metadata_path, trial_name, grf_path_input=None):
-    # create directories
-    os.makedirs(session_path, exist_ok=True)
-    osim_path = os.path.join(session_path, 'OpenSimData') 
-    os.makedirs(osim_path, exist_ok=True)
-    model_path = os.path.join(osim_path, 'Model')
-    kinematics_path = os.path.join(osim_path, 'Kinematics')
-    os.makedirs(model_path, exist_ok=True)
-    os.makedirs(kinematics_path, exist_ok=True)
-    force_path = os.path.join(session_path, 'ForceData') 
-    os.makedirs(force_path, exist_ok=True)
-    
-    
-    # if metadata doesn't exist, copy it from one folder above where this file is
-    shutil.copy2(metadata_path,
-                  os.path.join(session_path, 'sessionMetadata.yaml'))
 
-    # get the model file name
-    model_filename = os.path.basename(model_path_input)
-    # copy model from model_path to where it goes in folder structure
-    shutil.copy2(model_path_input, os.path.join(model_path, model_filename))
 
-    # get the kinematics file name
-    ik_filename = trial_name + '.mot'
-    # copy kinematics from ik_path to where it goes in folder structure
-    shutil.copy2(ik_path_input, os.path.join(kinematics_path, ik_filename))
-    
-    # Handle GRF data if provided
-    if grf_path_input:
-        force_filename = trial_name + '_forces.mot'
-        shutil.copy2(grf_path_input, os.path.join(force_path, force_filename))
-
-    return
 

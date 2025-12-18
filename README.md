@@ -1,18 +1,21 @@
 # OpenCap Processing
 
-This repository enables the post-processing of human movement kinematics collected using [OpenCap](opencap.ai). You can run kinematic analyses, download multiple sessions using scripting, and run muscle-driven simulations to estimate kinetics.
+This repository enables the post-processing of human movement kinematics collected using [OpenCap](opencap.ai). You can run kinematic analyses, download multiple sessions using scripting, and run muscle-driven simulations to estimate kinetics. Building on the original OpenCap processing repository, this codebase implements the hybrid machine learning–simulation pipeline described in Miller et al., improving estimation of ground reaction forces, joint moments, and joint contact forces.
 
-## Publication
-More information is available in our [paper](https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1011462): <br> <br>
+## Publications
+More information is available in our [preprint](https://www.biorxiv.org/XXXX): 
+
+Miller EY, Tan T, Falisse A, Uhlrich SD, 2025. Integrating Machine Learning with Musculoskeletal Simulation Improves OpenCap Video-Based Dynamics Estimation 
+
 Uhlrich SD*, Falisse A*, Kidzinski L*, Ko M, Chaudhari AS, Hicks JL, Delp SL, 2022. OpenCap: Human movement dynamics from smartphone videos. PLoS Comput Biol 19(10): e1011462. https://doi.org/10.1371/journal.pcbi.1011462. *contributed equally <br> <br>
-Archived code base corresponding to publication: https://zenodo.org/record/7419973
+
 
 ## Install requirements
 ### General
 1. Install [Anaconda](https://www.anaconda.com/)
 1. Open Anaconda prompt
-2. Create environment (python 3.11 recommended): `conda create -n opencap-processing python=3.11`
-3. Activate environment: `conda activate opencap-processing`
+2. Create environment (python 3.11 recommended): `conda create -n opencap-processing-grf python=3.11`
+3. Activate environment: `conda activate opencap-processing-grf`
 4. Install OpenSim: `conda install -c opensim-org opensim=4.5=py311np123`
     - Test that OpenSim was successfully installed:
         - Start python: `python`
@@ -24,13 +27,13 @@ Archived code base corresponding to publication: https://zenodo.org/record/74199
 5. (Optional): Install an IDE such as Spyder: `conda install spyder`
 6. Clone the repository to your machine: 
     - Navigate to the directory where you want to download the code: eg. `cd Documents`. Make sure there are no spaces in this path.
-    - Clone the repository: `git clone https://github.com/stanfordnmbl/opencap-processing.git`
-    - Navigate to the directory: `cd opencap-processing`
+    - Clone the repository: `git clone https://github.com/utahmobl/opencap-processing-grf.git`
+    - Navigate to the directory: `cd opencap-processing-grf`
 7. Install required packages: `python -m pip install -r requirements.txt`
 8. Run `python createAuthenticationEnvFile.py`
     - An environment variable (`.env` file) will be saved after authenticating.    
     
-### Muscle-driven simulations
+### Simulations
 1. **Windows only**: Install [Visual Studio](https://visualstudio.microsoft.com/downloads/)
     - The Community variant is sufficient and is free for everyone.
     - During the installation, select the *workload Desktop Development with C++*.
@@ -40,17 +43,7 @@ Archived code base corresponding to publication: https://zenodo.org/record/74199
 
     
 ## Examples
-- Run `example.py` for examples of how to run kinematic analyses
-- Run `example_kinetics.py` for examples of how to generate muscle-driven simulations
-- Moco
-    - The [Moco folder](https://github.com/stanfordnmbl/opencap-processing/tree/main/Moco) contains examples for generating muscle-driven simulations using [OpenSim Moco](https://opensim-org.github.io/opensim-moco-site/). 
+- Run `batchDownload_ForGRFTrack.py` for example of how download data and predict GRFs/COPs
+- Run `example_walking_opensimAD_GRF.py` for examples of how to generate hybrid simulations
 
-## Download OpenCap data
 
-### Using Colab
-- Open `batchDownload.ipynb` in Colab and follow the instructions
-    - You do not need to follow the install requirements above.
-
-### Locally
-- Follow the install requirements above
-- Open `batchDownload.py` and follow the instructions

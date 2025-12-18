@@ -89,13 +89,13 @@ def getCOP_masks(storage_file, forceNames=None, threshold=10):
 
 
 # %% Segment gait
-def segment_gait(session_id, trial_name, data_folder, gait_cycles_from_end=0):
+def segment_gait(session_id, trial_name, data_folder, leg_input = 'l', gait_cycles_from_end=0):
     
     # Segmentation is done in the gait_analysis class
     from gait_analysis import gait_analysis  
     
     gait = gait_analysis(os.path.join(data_folder,session_id), trial_name,
-                         n_gait_cycles=-1)
+                         n_gait_cycles=-1, leg=leg_input)
     heelstrikeTimes = gait.gaitEvents['ipsilateralTime'][gait_cycles_from_end,(0,2)].tolist()
     
     return heelstrikeTimes, gait
@@ -578,18 +578,22 @@ def generate_model_with_contacts(
     # %% Add contact spheres to the scaled model.
     # The parameters of the foot-ground contacts are based on previous work. We
     # scale the contact sphere locations based on foot dimensions.
+    shift = 0.03; # 0.01 is a centimeter
+    shift_s1 = 0.01
+    # Right foot: shift medially (negative z direction)
+    # Left foot: shift medially (positive z direction)
     reference_contact_spheres = {
-        "s1_r": {"radius": 0.032, "location": np.array([0.0019011578840796601,   -0.01,  -0.00382630379623308]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_r"},
+        "s1_r": {"radius": 0.032, "location": np.array([0.0019011578840796601,   -0.01,  -0.00382630379623308 - shift_s1]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_r"},
         "s2_r": {"radius": 0.032, "location": np.array([0.14838639994206301,     -0.01,  -0.028713422052654002]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_r"},
         "s3_r": {"radius": 0.032, "location": np.array([0.13300117060705099,     -0.01,  0.051636247344956601]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_r"},
         #"s4_r": {"radius": 0.016, "location": np.array([0.066234666199163503,    -0.01,  0.026364160674169801]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_r"},
-        "s4_r": {"radius": 0.032, "location": np.array([0.066234666199163503,    -0.01,  0.026364160674169801]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_r"},
+        "s4_r": {"radius": 0.032, "location": np.array([0.066234666199163503,    -0.01,  0.026364160674169801 - shift]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_r"},
         "s5_r": {"radius": 0.032, "location": np.array([0.059999999999999998,    -0.01,  -0.018760308461917698]), "orientation": np.array([0, 0, 0]), "socket_frame": "toes_r" },
         "s6_r": {"radius": 0.032, "location": np.array([0.044999999999999998,    -0.01,  0.061856956754965199]), "orientation": np.array([0, 0, 0]), "socket_frame": "toes_r" },
-        "s1_l": {"radius": 0.032, "location": np.array([0.0019011578840796601,   -0.01,  0.00382630379623308]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_l"},
+        "s1_l": {"radius": 0.032, "location": np.array([0.0019011578840796601,   -0.01,  0.00382630379623308 + shift_s1]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_l"},
         "s2_l": {"radius": 0.032, "location": np.array([0.14838639994206301,     -0.01,  0.028713422052654002]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_l"},
         "s3_l": {"radius": 0.032, "location": np.array([0.13300117060705099,     -0.01,  -0.051636247344956601]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_l"},
-        "s4_l": {"radius": 0.032, "location": np.array([0.066234666199163503,    -0.01,  -0.026364160674169801]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_l"},
+        "s4_l": {"radius": 0.032, "location": np.array([0.066234666199163503,    -0.01,  -0.026364160674169801 + shift]), "orientation": np.array([0, 0, 0]), "socket_frame": "calcn_l"},
         "s5_l": {"radius": 0.032, "location": np.array([0.059999999999999998,    -0.01,  0.018760308461917698]), "orientation": np.array([0, 0, 0]), "socket_frame": "toes_l" },
         "s6_l": {"radius": 0.032, "location": np.array([0.044999999999999998,    -0.01,  -0.061856956754965199]), "orientation": np.array([0, 0, 0]), "socket_frame": "toes_l" }}      
     reference_scale_factors = {"calcn_r": np.array([0.91392399999999996, 0.91392399999999996, 0.91392399999999996]),
@@ -720,36 +724,39 @@ def generate_model_with_contacts(
     
 
 
+import numpy as np
+
 def map_stance_phase(gait_events, time_len):
     """
     Compute stance percent (0–100) for both legs using gait_events.
-    Uses the first full stance phase from either leg as a reference.
+    Ensures: negatives -> NaN, values clipped to [0,100], and
+    monotonic non-decreasing within each finite (non-NaN) segment.
 
     Parameters:
-        gait_events (dict): Dictionary containing:
-            - 'hsIps', 'toIps', 'hsCont', 'toCont': np.ndarray of indices
-            - 'ipsilateralLeg': 'l' or 'r'
-        time_len (int): Length of the time vector
+        gait_events (dict): keys 'hsIps','toIps','hsCont','toCont','ipsilateralLeg'
+        time_len (int): length of time vector
 
     Returns:
-        stance_percent_l (np.ndarray): Stance % for left leg (NaN outside stance)
-        stance_percent_r (np.ndarray): Stance % for right leg (NaN outside stance)
+        stance_percent_l (np.ndarray)
+        stance_percent_r (np.ndarray)
     """
 
     # Assign events based on ipsilateral leg label
     if gait_events['ipsilateralLeg'] == 'l':
-        hs_l, to_l = gait_events['hsIps'], gait_events['toIps']
-        hs_r, to_r = gait_events['hsCont'], gait_events['toCont']
+        hs_l, to_l = np.asarray(gait_events['hsIps']),  np.asarray(gait_events['toIps'])
+        hs_r, to_r = np.asarray(gait_events['hsCont']), np.asarray(gait_events['toCont'])
     else:
-        hs_r, to_r = gait_events['hsIps'], gait_events['toIps']
-        hs_l, to_l = gait_events['hsCont'], gait_events['toCont']
+        hs_r, to_r = np.asarray(gait_events['hsIps']),  np.asarray(gait_events['toIps'])
+        hs_l, to_l = np.asarray(gait_events['hsCont']), np.asarray(gait_events['toCont'])
 
     # --- Step 1: Find reference stance duration ---
     def get_first_stance_duration(hs, to):
-        for hs_i in sorted(hs):
+        hs = np.asarray(hs, dtype=int)
+        to = np.asarray(to, dtype=int)
+        for hs_i in np.sort(hs):
             future_to = to[to > hs_i]
-            if future_to.size > 0:
-                return future_to[0] - hs_i + 1
+            if future_to.size:
+                return int(future_to[0] - hs_i + 1)
         return None
 
     N_ref = get_first_stance_duration(hs_l, to_l)
@@ -758,29 +765,77 @@ def map_stance_phase(gait_events, time_len):
     if N_ref is None:
         raise ValueError("No complete stance phase found on either leg.")
 
-    # --- Step 2: Interpolate stance % ---
+    time_len = int(time_len)
+
+    # --- Step 2: Interpolate stance % per leg ---
     def interpolate_leg(hs, to, N_ref):
-        percent = np.full(time_len, np.nan)
+        percent = np.full(time_len, np.nan, dtype=float)
         used_to = set()
 
-        for hs_i in hs:
-            future_to = to[to > hs_i]
-            if future_to.size > 0:
-                to_i = future_to[0]
-                used_to.add(to_i)
-                idx = np.arange(hs_i, min(to_i + 1, time_len))
-                percent[idx] = np.linspace(0, 100, N_ref)[-len(idx):]
+        # Forward stances: HS -> next TO (0..100)
+        for hs_i in np.sort(np.asarray(hs, dtype=int)):
+            future_to = np.asarray(to, dtype=int)
+            future_to = future_to[future_to > hs_i]
+            if future_to.size:
+                to_i = int(future_to[0]); used_to.add(to_i)
+                lo = max(hs_i, 0); hi = min(to_i, time_len - 1)
+                if hi >= lo:
+                    idx = np.arange(lo, hi + 1, dtype=int)
+                    percent[idx] = np.linspace(0.0, 100.0, idx.size)
             else:
-                idx = np.arange(hs_i, time_len)
-                n_pts = len(idx)
-                percent[idx] = np.linspace(0, 100 * n_pts / N_ref, n_pts)
+                # No TO after this HS: ramp proportionally until end
+                lo = max(hs_i, 0); hi = time_len - 1
+                if hi >= lo:
+                    idx = np.arange(lo, hi + 1, dtype=int)
+                    n_pts = idx.size
+                    # scale so last value <= 100 * (n_pts / N_ref)
+                    percent[idx] = np.linspace(0.0, 100.0 * n_pts / float(N_ref), n_pts)
 
-        for to_i in to:
+        BUFFER = 4  # your 4-sample grace
+        
+        # Backward stances: TO without preceding HS (… -> TO, going up to 100)
+        for to_i in np.sort(np.asarray(to, dtype=int)):
             if to_i in used_to:
                 continue
-            idx = np.arange(0, to_i + 1)
-            n_pts = len(idx)
-            percent[idx] = np.linspace(100 * (1 - n_pts / N_ref), 100, n_pts)
+            lo = 0; hi = min(to_i, time_len - 1)
+            if hi < lo:
+                continue
+            idx = np.arange(lo, hi + 1, dtype=int)
+            n_pts = idx.size
+        
+            if n_pts > (N_ref + BUFFER):
+                # Too long by > BUFFER: Nan-out early excess, ramp 0→100 on the last N_ref+BUFFER
+                keep = N_ref + BUFFER
+                cut = n_pts - keep                     # number to set to NaN at the start
+                percent[idx[:cut]] = np.nan
+                tail = idx[cut:]
+                percent[tail] = np.linspace(0.0, 100.0, tail.size)
+            else:
+                # Shorter (or within buffer) → proportional start, never below 0
+                start = max(0.0, 100.0 * (1.0 - n_pts / float(N_ref)))
+                percent[idx] = np.linspace(start, 100.0, n_pts)
+
+
+        # --- Post-process: negatives -> NaN; clip to [0,100]; enforce monotonic per segment ---
+        percent[percent < 0] = np.nan
+        percent = np.clip(percent, 0.0, 100.0, out=percent)
+
+        # Enforce monotonic non-decreasing within each contiguous finite run
+        finite = np.isfinite(percent)
+        if finite.any():
+            # find runs of True in 'finite'
+            idx = np.flatnonzero(finite)
+            split_points = np.where(np.diff(idx) > 1)[0] + 1
+            runs = np.split(idx, split_points)
+            for run in runs:
+                if run.size == 0:
+                    continue
+                seg = percent[run]
+                # make non-decreasing
+                seg_mono = np.maximum.accumulate(seg)
+                # keep within [0, 100]
+                np.clip(seg_mono, 0.0, 100.0, out=seg_mono)
+                percent[run] = seg_mono
 
         return percent
 
@@ -789,4 +844,5 @@ def map_stance_phase(gait_events, time_len):
     stance_percent_r = interpolate_leg(hs_r, to_r, N_ref)
 
     return stance_percent_l, stance_percent_r
+
 

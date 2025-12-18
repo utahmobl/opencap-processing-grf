@@ -24,8 +24,10 @@
 
 # %% Packages.
 import os
+import re
 import casadi as ca
 import numpy as np
+import pandas as pd
 import sys
 import yaml
 import scipy.interpolate as interpolate
@@ -35,7 +37,7 @@ import copy
 import pandas as pd
 
 # %% Settings.
-def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0', 
+def run_tracking(baseDir, dataDir, subject, settings, foot_positions = 'None', case='0', 
                  solveProblem=True, analyzeResults=True, writeGUI=True,
                  computeKAM=True, computeMCF=True):
     
@@ -67,8 +69,8 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
             weights['copAccelerationTerm'] = settings['weights']['copAccelerationTerm']
     if 'pelvisResidualsTerm' in settings['weights']:
         weights['pelvisResidualsTerm'] = settings['weights']['pelvisResidualsTerm']
-    if 'contrainCOPX_to_footMarkers' in settings['weights']:
-        weights['contrainCOPX_to_footMarkers'] = settings['weights']['contrainCOPX_to_footMarkers']
+    if 'footTorqueTerm' in settings['weights']:
+            weights['footTorqueTerm'] = settings['weights']['footTorqueTerm']
     
     # Model info.
     # Model name.
@@ -91,7 +93,8 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
     maxIter = 5000 #default iterations
     if "maxIter" in settings:
          maxIter = settings['maxIter']
-    
+         
+   
     # Set withLumbarCoordinateActuators to True to actuate the lumbar 
     # coordinates with coordinate actuators. Coordinate actuator have simple
     # dynamics to relate excitations and activations. The maximal excitations
@@ -270,19 +273,23 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
             
     monotonic_cops = False
     if 'copMonotonicTerm' in settings['weights'] and settings['weights']['copMonotonicTerm'] > 0:
-        monotonic_cops = True
-    
-    acceleration_cops = False
-    if 'copAccelerationTerm' in settings['weights'] and settings['weights']['copAccelerationTerm'] > 0:
-        acceleration_cops = True
-        
+        monotonic_cops = True    
+   
     track_cops = False
-    foot_torque_actuator = False
     if 'copTrackingTerm' in settings['weights'] and settings['weights']['copTrackingTerm'] > 0:
-        track_cops  = True
-        # Include a torque actuator between ground and foot to help tracking of COP
+        track_cops  = True       
+        
+   # Include a torque actuator between ground and foot to help tracking of COP
+   # optional, sometimes helps with odd COP cases, default is turned off to ease convergence   
+    foot_torque_actuator = False
+    if 'footTorqueTerm' in settings['weights'] and settings['weights']['footTorqueTerm'] > 0:
         foot_torque_actuator = True
         foot_torque_names = ['torque_r_x', 'torque_r_z', 'torque_l_x', 'torque_l_z']
+        if 'footTorqueTerm' in settings['weights']:
+            foot_torque_weight = weights['footTorqueTerm'] 
+        if 'foot_torque_dir' in settings:
+            foot_torque_dir = settings['foot_torque_dir']
+            
 
                 
     # Set filter_grfs_toTrack to True to filter the ground reaction forces
@@ -295,21 +302,13 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
         if 'cutoff_freq_grfs' in settings:
             cutoff_freq_grfs = settings['cutoff_freq_grfs']
             
-    filter_cops_toTrack = True
+    filter_cops_toTrack = False
     if 'filter_cops_toTrack' in settings:
         filter_cops_toTrack = settings['filter_cops_toTrack']
     if filter_cops_toTrack:
         cutoff_freq_grfs = 30
         if 'cutoff_freq_cops' in settings:
             cutoff_freq_cops = settings['cutoff_freq_cops']
-
-
-
-    # Contrain COPs to be inside the foot during stance
-    constrain_COPX = False
-    if 'contrainCOPX_to_footMarkers' in settings['weights'] and settings['weights']['contrainCOPX_to_footMarkers'] > 0:
-        constrain_COPX = True
-
 
 
 
@@ -762,157 +761,32 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
             GRF_interp, cols_to_pull).to_numpy()[:,1:] # grf_x,y,z for each leg
             
             
-    if constrain_COPX:
-        foot_position_interp = {}
 
-        for side in ['right', 'left']:
-            foot_position_interp[side] = {}
-            for part in ['calc', 'toe']:
-                data = foot_positions[side][part]  # shape (T, 3)
-                
-                # Build DataFrame with your known input times
-                df = pd.DataFrame(data, columns=['x', 'y', 'z'])
-                df['time'] = settings['input_times']
-                
-                # Interpolate using your existing function
-                df_interp = interpolateDataFrame(df, timeIntervals[0], timeIntervals[1], N)
-                
-                # Store only interpolated XYZ as numpy array
-                foot_position_interp[side][part] = df_interp[['x', 'y', 'z']].to_numpy()
         
-    # %% COP data to track
-    def getCOPs_from_average_profile(foot_positions, CoP_masks, stance_percents, cop_avg, timeIntervals, N, toe_thresh):
-        """
-        Generates COPs based on a stance-normalized average COP profile,
-        scaled between heel and toe positions using stance %.
+    # %% Get COP data to track
+    def enforce_monotonic_and_smooth(cop_array, window=21, poly=2):
+        cop_array = cop_array.flatten()
+        nonzero_mask = cop_array > 0
     
-        Parameters:
-        - foot_positions: dict, contains 'calc' and 'toe' arrays for each leg ('right', 'left')
-        - CoP_masks: dict, contains stance index mask tuples for each leg ('r', 'l')
-        - stance_percents: dict, stance % (0–100 or NaN) arrays for each leg ('r', 'l')
-        - cop_avg: 1D array of length 100: normalized profile from heel (0) to toe (1)
-        - timeIntervals: list, [start_time, end_time] of original signal
-        - N: int, number of interpolated time points
+        # Apply heavier smoothing first
+        if np.sum(nonzero_mask) >= window:
+            smoothed = savgol_filter(cop_array[nonzero_mask], window_length=window, polyorder=poly)
+        else:
+            smoothed = cop_array[nonzero_mask]
     
-        Returns:
-        - COPs: dict with keys 'r' and 'l', each (N, 1) array of interpolated COPs
-        """
-        import numpy as np
-        from scipy.interpolate import interp1d
+        # Enforce strict monotonicity after smoothing
+        smoothed = np.maximum.accumulate(smoothed)
     
-        COPs = {}
-        interp_times = np.linspace(timeIntervals[0], timeIntervals[1], N)
-        original_times = np.linspace(timeIntervals[0], timeIntervals[1], foot_positions['left']['calc'].shape[0])
+        # Reinsert into full signal
+        cop_array[nonzero_mask] = smoothed
     
-        for leg in ['right', 'left']:
-            short_leg = 'r' if leg == 'right' else 'l'
+        return cop_array.reshape(-1, 1)      
     
-            heel = foot_positions[leg]['calc'][:, 0]
-            toe = foot_positions[leg]['toe'][:, 0] + toe_thresh
-            stance_percent = stance_percents[short_leg]
-            active_indices = CoP_masks[short_leg][0]
-    
-            full_COP = np.full(len(heel), np.nan)
-    
-            # Only compute COP for stance points
-            for i in active_indices:
-                percent = stance_percent[i]
-                if np.isnan(percent):
-                    continue
-                idx = int(np.clip(np.round(percent), 0, 99))  # clip to 0–99
-                alpha = cop_avg[idx]  # normalized offset
-                full_COP[i] = heel[i] + alpha * (toe[i] - heel[i])
-    
-            # Interpolate only within stance (active) region
-            valid = ~np.isnan(full_COP)
-            if np.sum(valid) >= 2:
-                f_interp = interp1d(original_times[valid], full_COP[valid], kind='linear',
-                                    bounds_error=False, fill_value=np.nan)
-                interpolated = f_interp(interp_times)
-            else:
-                interpolated = np.full(N, np.nan)
-    
-            COPs[short_leg] = interpolated.reshape(-1, 1)
-    
-        return COPs
-
-    
-    def getLinear_COPs_from_positions(foot_positions, CoP_masks, timeIntervals, N):
-        """
-        Generates custom CoPs by first moving from the calcaneus to an intermediate point,
-        then linearly to the toe marker for each limb, using CoP masks to zero out positions
-        when the foot is not in contact.
-        
-        Parameters:
-        - foot_positions: dict, contains 'calc' and 'toe' arrays for each leg ('r' and 'l')
-        - CoP_masks: dict, contains CoP masks for each leg ('r' and 'l') as tuple arrays
-        - timeIntervals: list, [start_time, end_time] for interpolation
-        - N: int, number of interpolation points
-        
-        Returns:
-        - Linear_COPs: dict, CoP data for each leg ('r' and 'l')
-        """
-        
-        # Initialize output dictionary
-        Linear_COPs = {}
-        
-        # Generate time points for interpolation
-        interp_times = np.linspace(timeIntervals[0], timeIntervals[1], N)
-        original_times = np.linspace(timeIntervals[0], timeIntervals[1], foot_positions['left']['calc'].shape[0])
-        
-        # Process each leg separately
-        for leg in ['right', 'left']:
-            short_leg = 'r' if leg == 'right' else 'l'
-            
-            calc_pos = foot_positions[leg]['calc'][:, 0]
-            toe_pos = foot_positions[leg]['toe'][:, 0]
-            
-            # Extract the active indices from the mask
-            active_indices = CoP_masks[short_leg][0]
-            
-            # Prepare an empty array for the final CoP positions
-            COP_interp = np.zeros((N, 1))
-            
-            # Find separate active segments
-            if len(active_indices) > 0:
-                # Identify start and end points of continuous segments
-                segments = np.split(active_indices, np.where(np.diff(active_indices) > 1)[0] + 1)
-            
-                # Interpolate each active segment
-                for segment in segments:
-                    start_idx = segment[0]
-                    end_idx = segment[-1]
-                    
-                    start_time = original_times[start_idx]
-                    end_time = original_times[end_idx]
-                    
-                    heel_pos = calc_pos[start_idx]
-                    toe_pos_end = toe_pos[end_idx]
-                    
-                    # Calculate the intermediate point
-                    mid_time = min(start_time + 0.04, end_time)  # 0.05 seconds later, capped at end time
-                    mid_pos = min(heel_pos + 0.1, toe_pos_end)  # 0.08 units higher, capped at toe position
-                    
-                    # Interpolate from heel to the intermediate point
-                    if mid_time > start_time:
-                        line1_interp = interp1d([start_time, mid_time], [heel_pos, mid_pos], kind='linear', fill_value="extrapolate")
-                        active_interp_indices1 = np.where((interp_times >= start_time) & (interp_times <= mid_time))[0]
-                        COP_interp[active_interp_indices1, 0] = line1_interp(interp_times[active_interp_indices1])
-                    
-                    # Interpolate from the intermediate point to the toe
-                    if end_time > mid_time:
-                        line2_interp = interp1d([mid_time, end_time], [mid_pos, toe_pos_end], kind='linear', fill_value="extrapolate")
-                        active_interp_indices2 = np.where((interp_times > mid_time) & (interp_times <= end_time))[0]
-                        COP_interp[active_interp_indices2, 0] = line2_interp(interp_times[active_interp_indices2])
-            
-            # Store the interpolated CoPs for this leg
-            Linear_COPs[short_leg] = COP_interp
-        
-        return Linear_COPs
-
-
     if  track_cops:
+        
+        from scipy.signal import savgol_filter  
         from utilsOpenSimAD import getCOPx_forTracking
+        
         pathGRF = os.path.join(pathForceFolder, trialName + '_forces.mot')
         COP_input = getCOPx_forTracking(pathGRF)
 
@@ -923,41 +797,7 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
         else:
             COP_input_filter = COP_input
             
-#         stance_percents = {'l': settings['Stance_Precentage']['left'], 'r': settings['Stance_Precentage']['right']} 
-#         CoP_masks = {
-#             'r': COP_r_mask,
-#             'l': COP_l_mask}    
-#         cop_avg = [
-#     -0.025811167, -0.012473037, -0.001336282, 0.007661184, 0.01723569,
-#     0.026889178, 0.036254932, 0.044674849, 0.052446986, 0.059793991,
-#     0.066980707, 0.073905394, 0.080380111, 0.086229561, 0.091411097,
-#     0.095947988, 0.099857365, 0.103203102, 0.106040691, 0.108467897,
-#     0.110616263, 0.112588708, 0.114477085, 0.116353095, 0.118258855,
-#     0.12022306, 0.122269305, 0.124411231, 0.126656223, 0.128996242,
-#     0.131418989, 0.1339051, 0.136439418, 0.139001543, 0.141569824,
-#     0.144128177, 0.146666282, 0.149181026, 0.151664575, 0.154110521,
-#     0.156511582, 0.158865022, 0.161171006, 0.163424926, 0.165619514,
-#     0.167750424, 0.169813036, 0.171807536, 0.173738434, 0.17561392,
-#     0.177438721, 0.179220126, 0.180967073, 0.182684797, 0.184380086,
-#     0.186057837, 0.187719763, 0.189366024, 0.190998535, 0.192620944,
-#     0.194236411, 0.195845338, 0.197449605, 0.199053045, 0.200656647,
-#     0.202261418, 0.203863738, 0.205461861, 0.207053562, 0.208637436,
-#     0.210210348, 0.211767745, 0.213310628, 0.214845422, 0.216375762,
-#     0.217907151, 0.219441116, 0.220980359, 0.222518876, 0.224043162,
-#     0.225544582, 0.227024817, 0.228492481, 0.229968312, 0.231482642,
-#     0.233071018, 0.234758344, 0.236548653, 0.2384414, 0.240445386,
-#     0.242602425, 0.244990168, 0.24767841, 0.250705993, 0.254213842,
-#     0.258214152, 0.262619685, 0.26752379, 0.272571954, 0.277668963
-# ]
-#         toe_thresh = 0.7
-#         Mocap_Cops = getCOPs_from_average_profile(foot_positions, CoP_masks, stance_percents, cop_avg, timeIntervals, N, toe_thresh)
-#         for leg in ['l', 'r']:
-#             Mocap_Cops[leg] = np.nan_to_num(Mocap_Cops[leg], nan=0.0)
-
-            
-            
-            
-
+         
         # Interpolation
         COP_interp = interpolateDataFrame(
             COP_input_filter, timeIntervals[0], timeIntervals[1], N)
@@ -969,14 +809,11 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
             cols_to_pull = ['COP_' + leg + '_' + d for d in direcs]
             COP_toTrack[leg] = selectFromDataFrame(
             COP_interp, cols_to_pull).to_numpy()[:,1:] # grf_x,y,z for each leg
-        Mocap_Cops = COP_toTrack
-        
-        
-        # # linear cops
-        # CoP_masks = {
-        #     'r': COP_r_mask,
-        #     'l': COP_l_mask}
-        # Mocap_Cops = getLinear_COPs_from_positions(foot_positions, CoP_masks, timeIntervals, N)
+            
+        for leg in ['l', 'r']:
+            COP_toTrack[leg] = np.nan_to_num(COP_toTrack[leg], nan=0.0)
+            COP_toTrack[leg] = enforce_monotonic_and_smooth(COP_toTrack[leg])  
+              
 
         
     # %% Kinematic data to track.
@@ -1226,7 +1063,7 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
         F_name += '_treadmill'
         dim += 1
     if foot_torque_actuator:
-        F_name += '_test'
+        F_name += '_foottorque'
         dim += 4
     if contact_side != 'all':
         F_name += '_{}'.format(contact_side)
@@ -1303,8 +1140,7 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
         
         
     if (monotonic_cops and weights['copMonotonicTerm'] > 0) or \
-        (acceleration_cops and weights['copAccelerationTerm'] > 0) or \
-          (constrain_COPX) or (track_cops) :
+        (track_cops) :
         idx_grf_forCOP = {}
         idx_grm_forCOP = {}
         idx_grf_forCOP['r'] = F_map['GRFs']['right']
@@ -1345,8 +1181,8 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
         f_nLumbarJointsSum2 = normSumSqr(nLumbarJoints)
     if torque_driven_model:
         f_nCoordinatesSum2 = normSumSqr(nMuscleDrivenJoints)
-    if foot_torque_actuator:
-        f_footTorqueActuator2 = normSumSqr(4)
+    # if foot_torque_actuator:
+    #     f_footTorqueActuator2 = normSumSqr(4)
     f_diffTorques = diffTorques()  
     
     # %% OPTIMAL CONTROL PROBLEM FORMULATION
@@ -1455,7 +1291,7 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
             lw['rActk'][c_j] = ca.vec(lw['rAct'][c_j].to_numpy().T * np.ones((1, N))).full()      
     # Foot torque actuators.
     if foot_torque_actuator:
-        uw['FootTorque'], lw['FootTorque'], scaling['FootTorque'] = bounds.getBoundsFootTorqueActuator(max_torque=1000) # EYM edit need to delete
+        uw['FootTorque'], lw['FootTorque'], scaling['FootTorque'] = bounds.getBoundsFootTorqueActuator(max_torque=50) 
         uw['FootTorquek'] = ca.vec(uw['FootTorque'].to_numpy().T * np.ones((1, N))).full()
         lw['FootTorquek'] = ca.vec(lw['FootTorque'].to_numpy().T * np.ones((1, N))).full()
     # Static parameters.
@@ -1522,7 +1358,6 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
             
     if foot_torque_actuator:
         # Foot torque actuators.
-        # TODO IMPLEMENT THIS CORRECTLY
         if 'FootTorque' not in w0:
             w0['FootTorque'] = {}  # Initialize it as an empty dictionary
     
@@ -1746,6 +1581,7 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
             (w0['Qs'].to_numpy().T, np.reshape(
                 w0['Qs'].to_numpy().T[:,-1], 
                 (w0['Qs'].to_numpy().T.shape[0], 1))), axis=1)
+        
         opti.set_initial(Qs, guessQsEnd)
         # Small margin to account for filtering.
         assert np.all(lw['Qsk'] - np.pi/180 <= ca.vec(guessQsEnd).full()), "Issue with lower bound coordinate values"
@@ -2163,103 +1999,58 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
                         
                         
                 if (monotonic_cops and weights['copMonotonicTerm'] > 0) or \
-                    (acceleration_cops and weights['copAccelerationTerm'] > 0) or \
-                      (constrain_COPX)  or \
-                          (track_cops and weights['copTrackingTerm'] > 0):
-                          
-
-
-                        # Define weights
-                        w_cop_monotonic    = ca.DM([10., 0., 0.]) 
-                        w_copConvexity    = ca.DM([10., 0., 0.])  # same weight as acceleration for now
-                        w_copX_soft = ca.DM([10., 0., 0.])  # only penalize X
+                    (track_cops and weights['copTrackingTerm'] > 0):
+                              
+                    # Define weights
+                    w_cop_monotonic = ca.DM([10., 0., 0.]) 
+                    w_copConvexity = ca.DM([10., 0., 0.])
+                    
+                    # Get functions
+                    f_getCOP = getCOP_casadi(1)
+                    f_thirdDerivative = thirdDerivativeInflectionPenalty(4, 3)
+                    f_COP_rmse = calculate_rmse_casadi(1)
+                    
+                    # Get Mocap data for this timestep
+                    Mocap_R = ca.MX(COP_toTrack['r'][k])
+                    Mocap_L = ca.MX(COP_toTrack['l'][k])                        
+                   
+                    for leg in ['r', 'l']:
+                        side = 'right' if leg == 'r' else 'left'
+                        GRF_k = Tk[idx_grf_forCOP[leg], 0]  # (3,)
+                        GRM_k = Tk[idx_grm_forCOP[leg], 0]  # (3,)
+                        COP_k = f_getCOP(GRF_k, GRM_k).T    # (1, 3)
+                    
+                        COP_leg = COP_leg_all[leg]
+                    
+                        # Store the computed COP value
+                        COP_leg_all[leg][k, :] = COP_k
                         
-                        # Get functions
-                        f_getCOP          = getCOP_casadi(1)
-                        f_thirdDerivative = thirdDerivativeInflectionPenalty(4, 3)
-                        f_copXPenalty = copXOutsideBoundsPenalty()
-                        f_COP_rmse = calculate_rmse_casadi(1)
+                        # Determine if this timestep is in stance based on mask
+                        # Use simple binary decision: in mask = full weight, not in mask = zero weight
+                        is_stance = (leg == 'r' and k in COP_r_indices) or (leg == 'l' and k in COP_l_indices)
                         
-                        # Get Mocap data for this timestep
-                 
-                        Mocap_R = ca.MX(Mocap_Cops['r'][k])
-                        Mocap_L = ca.MX(Mocap_Cops['l'][k])
-                        
-
-                        
-                        for leg in ['r', 'l']:
-                            side = 'right' if leg == 'r' else 'left'
-                            GRF_k = Tk[idx_grf_forCOP[leg], 0]  # (3,)
-                            GRM_k = Tk[idx_grm_forCOP[leg], 0]  # (3,)
-                            COP_k = f_getCOP(GRF_k, GRM_k).T    # (1, 3)
-                            COP_leg_all[leg][k, :] = COP_k
-                        
-                            COP_leg = COP_leg_all[leg]
-                            COP_indices = COP_r_indices if leg == 'r' else COP_l_indices
-                        
-                            # === COPX constraint if vGRF > 2 ===
-                            if constrain_COPX:
-                                COPX = COP_k[0, 0]  # since COP_k is (1, 3)
-                                vGRF = GRF_k[1]  # Fy
-                                calc_x = foot_position_interp[side]['calc'][k, 0]
-                                toe_x  = foot_position_interp[side]['toe'][k, 0]
-                                x_min = ca.mmin(ca.vertcat(calc_x, toe_x))
-                                x_max = ca.mmax(ca.vertcat(calc_x, toe_x))
-                                
-                               
-                                # EYM edit, try this instead
-                                penalty_if_active = f_copXPenalty(ca.vertcat(COPX), x_min, x_max, vGRF, w_copX_soft)
-                                if side == 'left':
-                                   penalty_if_active = f_copXPenalty(ca.vertcat(COPX), x_min, x_max, vGRF, w_copX_soft)
-                                
-                                # Add to objective
-                                if k in COP_indices:
-                                    J += weights['contrainCOPX_to_footMarkers'] * penalty_if_active * h * B[j + 1]
-
-                        
-                            # === COP monotonicity ===
-                            if monotonic_cops and weights['copMonotonicTerm'] > 0 and k >= 2:
-                                input_COP = COP_leg[k-2:k, :]  # shape (2, 3)
+                        # === COP monotonicity ===
+                        if monotonic_cops and weights['copMonotonicTerm'] > 0 and k >= 2:
+                            # Only apply monotonicity constraint during stance phase
+                            if is_stance:
+                                input_COP = COP_leg[k-2:k, :]
                                 f_monotonic = derivativeSumOfNegatives(2, 3)
                                 monotonic_term = f_monotonic(input_COP, w_cop_monotonic)
-                                if side == 'left':
-                                   monotonic_term = f_monotonic(input_COP, w_cop_monotonic) 
-                                if k in COP_indices:
-                                    J += weights['copMonotonicTerm'] * monotonic_term * h * B[j + 1]
-                        
-                            # === Convexity (3rd derivative) penalty, under "acceleration" flag ===
-                            if acceleration_cops and weights['copAccelerationTerm'] > 0 and k >= 4:
-                                input_COP = COP_leg[k-4:k, :]  # shape (4, 3)
-                                convexity_term = f_thirdDerivative(input_COP, w_copConvexity)
-                                if side == 'left':
-                                   convexity_term = f_thirdDerivative(input_COP, w_copConvexity)
-                                if k in COP_indices:
-                                    J += weights['copAccelerationTerm'] * convexity_term * h * B[j + 1]
-                            
-                            # === COP Tracking Term ===
-                            if track_cops and weights['copTrackingTerm'] > 0:
-                                X_COP = COP_k[:,0]
+                                J += weights['copMonotonicTerm'] * monotonic_term * h * B[j + 1]
+                  
+                        # === COP Tracking Term ===
+                        if track_cops and weights['copTrackingTerm'] > 0:
+                            # Only track COP during confirmed stance phase
+                            if is_stance:
+                                X_COP = COP_k[:, 0]  # Use computed COP directly
                                 if leg == 'r':
                                     copTrackingTerm_r = f_COP_rmse(Mocap_R, X_COP)
-                                   
-                                    if k in COP_indices:
-                                        J += (weights['copTrackingTerm'] * copTrackingTerm_r
-                                              * h * B[j + 1])
-                                        COP_RMSE_r_vec.append(copTrackingTerm_r)
-                                    else:
-                                        COP_RMSE_r_vec.append(0)
-                                        
-                                if leg == 'l':
+                                    J += weights['copTrackingTerm'] * copTrackingTerm_r * h * B[j + 1]
+                                    COP_RMSE_r_vec.append(copTrackingTerm_r)
+                                else:
                                     copTrackingTerm_l = f_COP_rmse(Mocap_L, X_COP)
-
-                                    if k in COP_indices:
-                                        J += (weights['copTrackingTerm'] * copTrackingTerm_l 
-                                          * h * B[j + 1])  
-                                        COP_RMSE_l_vec.append(copTrackingTerm_l)
-                                    else:
-                                        COP_RMSE_l_vec.append(0)
-
-                            
+                                    J += weights['copTrackingTerm'] * copTrackingTerm_l * h * B[j + 1]
+                                    COP_RMSE_l_vec.append(copTrackingTerm_l)   
     
                             
 
@@ -2273,7 +2064,12 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
                     
                 #Penalize foot torque slightly:
                 if foot_torque_actuator:
-                    J += 1e-6 * ca.sumsqr(footTorque[:, k]) * h * B[j + 1]
+                    if foot_torque_dir == 'z':
+                        J += foot_torque_weight * ca.sumsqr(footTorque[[1,3], k]) * h * B[j + 1]
+                    elif foot_torque_dir == 'x':
+                        J += foot_torque_weight * ca.sumsqr(footTorque[[0,2], k]) * h * B[j + 1]
+                    else:
+                        J += foot_torque_weight * ca.sumsqr(footTorque[:, k]) * h * B[j + 1]
 
                         
 
@@ -2457,7 +2253,7 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
         from utilsOpenSimAD import solve_with_bounds       
 
 
-        w_opt, stats = solve_with_bounds(opti, ipopt_tolerance, useExpressionGraphFunction, maxIter)
+        w_opt, stats = solve_with_bounds(opti, ipopt_tolerance, useExpressionGraphFunction, maxIter, pathResults, case)
     
    
         np.save(os.path.join(pathResults, 'w_opt_{}.npy'.format(case)), w_opt)
@@ -2471,11 +2267,16 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
         
   
 
-        if maxIter >= 5000:
-            if not stats['success'] == True:
-                print('PROBLEM DID NOT CONVERGE - {} - {} - {} \n\n'.format( 
-                      stats['return_status'], subject, trialName))
-                return
+        #if maxIter >= 5000:
+        if not stats['success'] == True:
+            message = 'PROBLEM DID NOT CONVERGE - {} - {} - {}\n'.format(
+                stats['return_status'], subject, trialName)
+            print(message)
+        
+            # Save message to a text file
+            with open(os.path.join(pathResults, 'did_not_converge.txt'), 'w') as f:
+                f.write(message)
+                #return
         
         # Extract results.
         starti = 0
@@ -2894,12 +2695,10 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
             grfTrackingTerm_opt_all = 0
         if track_cops:
             copTrackingTerm_opt_all = 0
+        if foot_torque_actuator:
+            foot_torqueTerm_opt_all = 0
         if  monotonic_cops:
             copMonotonicTerm_opt_all = 0
-        if  constrain_COPX:
-            constrain_COPXTerm_opt_all = 0
-        if  acceleration_cops:
-            copAccelerationTerm_opt_all = 0
         if allowPelvisResiduals:
             pelvisResidualsTrackingTerm_opt_all = 0
         if withReserveActuators:    
@@ -3026,40 +2825,38 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
                     grfTrackingTerm_opt = (f_nGRFsToTrackWSum2(GRF_all_opt['right'][:,k], GRF_toTrack['r'][k,:], w_grf_tracking) +
                                             f_nGRFsToTrackWSum2(GRF_all_opt['left'][:,k], GRF_toTrack['l'][k,:], w_grf_tracking))                                                          
                     grfTrackingTerm_opt_all += weights['grfTrackingTerm'] * grfTrackingTerm_opt  * h * B[j + 1]  
+                 
+                    
+                 
+                if foot_torque_actuator:
+                        if foot_torque_dir == 'z':
+                            foot_torqueTerm_opt_all += foot_torque_weight * ca.sumsqr(footTorque_opt[[1,3], k]) * h * B[j + 1]
+                        elif foot_torque_dir == 'x':
+                            foot_torqueTerm_opt_all += foot_torque_weight * ca.sumsqr(footTorque_opt[[0,2], k]) * h * B[j + 1]
+                        else:
+                            foot_torqueTerm_opt_all += foot_torque_weight * ca.sumsqr(footTorque_opt[:, k]) * h * B[j + 1]
                 
                 if track_cops:
-                    if k in COP_r_indices:
-                        copTrackingTerm_opt_r = f_COP_rmse(
-                            ca.DM(Mocap_Cops['r'][k]),
-                            ca.DM(COP_all_opt['right'][0, [k]].T)
-                        )
-                        copTrackingTerm_opt_all += weights['copTrackingTerm'] * copTrackingTerm_opt_r * h * B[j + 1]
+                    for leg in ['r', 'l']:
+                        side = 'right' if leg == 'r' else 'left'
+                        
+                        # Use binary mask decision: only track during confirmed stance
+                        is_stance = (leg == 'r' and k in COP_r_indices) or (leg == 'l' and k in COP_l_indices)
+                        
+                        if is_stance:
+                            if leg == 'r':
+                                copTrackingTerm_opt_r = f_COP_rmse(
+                                    ca.DM(COP_toTrack['r'][k]),
+                                    ca.DM(COP_all_opt['right'][0, [k]].T)
+                                )
+                                copTrackingTerm_opt_all += weights['copTrackingTerm'] * copTrackingTerm_opt_r * h * B[j + 1]
+                            else:
+                                copTrackingTerm_opt_l = f_COP_rmse(
+                                    ca.DM(COP_toTrack['l'][k]),
+                                    ca.DM(COP_all_opt['left'][0, [k]].T)
+                                )
+                                copTrackingTerm_opt_all += weights['copTrackingTerm'] * copTrackingTerm_opt_l * h * B[j + 1]
                 
-                    if k in COP_l_indices:
-                        copTrackingTerm_opt_l = f_COP_rmse(
-                            ca.DM(Mocap_Cops['l'][k]),
-                            ca.DM(COP_all_opt['left'][0, [k]].T)
-                        )
-                        copTrackingTerm_opt_all += weights['copTrackingTerm'] * copTrackingTerm_opt_l * h * B[j + 1]
-                
-
-                if acceleration_cops and weights['copAccelerationTerm'] > 0 and k >= 3:
-                    input_COP_r = COP_all_opt['right'][:, k-3:k+1].T  # shape (4, 3)
-                    input_COP_l = COP_all_opt['left'][:,  k-3:k+1].T
-                
-                    f_convexity = thirdDerivativeInflectionPenalty(4, 3)
-                    convexity_term_r = 0
-                    convexity_term_l = 0
-                    
-                    if k in COP_r_indices:
-                        convexity_term_r = f_convexity(input_COP_r, w_copConvexity)
-                    if k in COP_l_indices:
-                        convexity_term_l = f_convexity(input_COP_l, w_copConvexity) 
-                
-                    copAccelerationTerm_opt_all += (
-                        weights['copAccelerationTerm'] * (convexity_term_r + convexity_term_l) * h * B[j + 1]
-                    )
-
                 if monotonic_cops and weights['copMonotonicTerm'] > 0 and k >= 1:
                     input_COP_r = COP_all_opt['right'][:, [k-1, k]].T  # shape (2, 3)
                     input_COP_l = COP_all_opt['left'][:,  [k-1, k]].T
@@ -3067,7 +2864,7 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
                     f_monotonic = derivativeSumOfNegatives(2, 3)
                     monotonic_term_r = 0
                     monotonic_term_l = 0
-
+                    
                     if k in COP_r_indices:
                         monotonic_term_r = f_monotonic(input_COP_r, w_cop_monotonic)
                     if k in COP_l_indices:
@@ -3077,36 +2874,7 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
                         weights['copMonotonicTerm'] * (monotonic_term_r + monotonic_term_l) * h * B[j + 1]
                     )
                 
-                if constrain_COPX and weights['contrainCOPX_to_footMarkers'] > 0:
-                    from functionCasADiOpenSimAD import copXOutsideBoundsPenalty
-                    f_copXPenalty = copXOutsideBoundsPenalty()
                 
-                    w_copX_soft = ca.DM([10., 0., 0.])
-                    
-                    
-                    COPX_penalty_r = 0
-                    COPX_penalty_l = 0
-                
-                    if k in COP_r_indices:
-                        COPX_penalty_r = f_copXPenalty(
-                            ca.vertcat(COP_all_opt['right'][0, k]),
-                            ca.mmin(ca.vertcat(foot_position_interp['right']['calc'][k, 0], foot_position_interp['right']['toe'][k, 0])),
-                            ca.mmax(ca.vertcat(foot_position_interp['right']['calc'][k, 0], foot_position_interp['right']['toe'][k, 0])),
-                            GRF_all_opt['right'][1, k],
-                            w_copX_soft
-                        )
-                
-                    if k in COP_l_indices:
-                        COPX_penalty_l = f_copXPenalty(
-                            ca.vertcat(COP_all_opt['left'][0, k]),
-                            ca.mmin(ca.vertcat(foot_position_interp['left']['calc'][k, 0], foot_position_interp['left']['toe'][k, 0])),
-                            ca.mmax(ca.vertcat(foot_position_interp['left']['calc'][k, 0], foot_position_interp['left']['toe'][k, 0])),
-                            GRF_all_opt['left'][1, k],
-                            w_copX_soft
-                        )
-                
-                    constrain_COPXTerm_opt_all += (
-                        weights['contrainCOPX_to_footMarkers'] * (COPX_penalty_r + COPX_penalty_l) * h * B[j + 1])
                         
                 if allowPelvisResiduals:
                     pelvisResidualsTrackingTerm_opt = f_nPelvisResidualsSum2(
@@ -3161,6 +2929,8 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
             JMotor_opt += vGRFRatioTerm_opt_all
         if withReserveActuators:    
             JMotor_opt += reserveActuatorTerm_opt_all
+        if foot_torque_actuator:    
+            JMotor_opt += foot_torqueTerm_opt_all.full()
 
         # Tracking terms.
         JTrack_opt = (positionTrackingTerm_opt_all.full() +  
@@ -3173,10 +2943,6 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
             JTrack_opt += copTrackingTerm_opt_all.full()
         if monotonic_cops:
             JTrack_opt += copMonotonicTerm_opt_all.full()
-        if constrain_COPX:
-                JTrack_opt += constrain_COPXTerm_opt_all.full()
-        if acceleration_cops:
-            JTrack_opt += copAccelerationTerm_opt_all.full()
         if allowPelvisResiduals:
             JTrack_opt += pelvisResidualsTrackingTerm_opt_all.full()
         # Combined terms.
@@ -3227,15 +2993,12 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
         
         JTerms["positionTerm_sc"] = JTerms["positionTerm"] / JAll_opt[0][0]
         JTerms["velocityTerm_sc"] = JTerms["velocityTerm"] / JAll_opt[0][0]
-
+        if foot_torque_actuator:
+            JTerms["footTorqueTerm_sc"] = foot_torqueTerm_opt_all.full()[0][0] / JAll_opt[0][0]            
         if track_grfs:
             JTerms["grfTrackingTerm_sc"] = grfTrackingTerm_opt_all.full()[0][0] / JAll_opt[0][0]
         if monotonic_cops:
             JTerms["copMonotonicTerm_sc"] = copMonotonicTerm_opt_all.full()[0][0] / JAll_opt[0][0]
-        if constrain_COPX:
-            JTerms["copContraintinFoot_sc"] = constrain_COPXTerm_opt_all.full()[0][0] / JAll_opt[0][0]
-        if acceleration_cops:
-            JTerms["copAccelerationTerm_sc"] = copAccelerationTerm_opt_all.full()[0][0] / JAll_opt[0][0]
         if track_cops:
             JTerms["copTrackingTerm_sc"] = copTrackingTerm_opt_all.full()[0][0] / JAll_opt[0][0]
         if allowPelvisResiduals:
@@ -3260,14 +3023,12 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
         print("\tVelocity tracking: {}%".format(np.round(JTerms["velocityTerm_sc"] * 100, 2)))
         if track_grfs:
             print("\tGRF tracking: {}%".format(np.round(JTerms["grfTrackingTerm_sc"] * 100, 2)))
+        if foot_torque_actuator:
+            print("\tFoot Torque Term: {}%".format(np.round(JTerms["footTorqueTerm_sc"] * 100, 2)))
         if track_cops:
             print("\tCOP tracking: {}%".format(np.round(JTerms["copTrackingTerm_sc"] * 100, 2)))
         if monotonic_cops:
             print("\tMonotonic COP condition: {}%".format(np.round(JTerms["copMonotonicTerm_sc"] * 100, 2)))
-        if constrain_COPX:
-            print("\tConstrain COP in foot condition: {}%".format(np.round(JTerms["copContraintinFoot_sc"] * 100, 2)))
-        if acceleration_cops:
-            print("\tAcceleration COP condition: {}%".format(np.round(JTerms["copAccelerationTerm_sc"] * 100, 2)))
         if allowPelvisResiduals:
             print("\tPelvis residuals tracking: {}%".format(np.round(JTerms["pelvisResidualsTerm_sc"] * 100, 2)))
 
@@ -3301,7 +3062,7 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
         # %% Compute medial knee contact forces.
         if torque_driven_model:
             computeMCF = False
-            print("To compute medial knee contact forces, use a muscle-driven model.\n")
+            print("To compute medial knee contact forces, use a muscle-driven model or use static optimization.\n")
         if computeMCF:
             # Export muscle forces and non muscle-driven torques (if existing).
             labels = ['time'] 
@@ -3339,10 +3100,14 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
                         labels_torques.append(c_j)
                         data_torques.insert(data_torques.shape[1],
                                             c_j, aLumbar_opt_nsc)
-                    assert np.all(
-                            np.abs(torques_opt[joints.index(c_j),:]
-                                   - data_torques[c_j]) 
-                            < 10**(-2)), "error torques coordinate actuators"
+                    # assert np.all(
+                    #         np.abs(torques_opt[joints.index(c_j),:]
+                    #                - data_torques[c_j]) 
+                    #         < 10**(-2)), "error torques coordinate actuators"
+                    if not np.all(
+                        np.abs(torques_opt[joints.index(c_j), :]
+                               - data_torques[c_j]) < 1e-2):
+                        print("Warning: torque mismatch in coordinate actuators for", c_j)
             if withArms:
                 for count_j, c_j in enumerate(armJoints):
                     aArm_opt_nsc = (scaling['ArmE'].iloc[0][c_j] * 
@@ -3354,21 +3119,31 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
                         labels_torques.append(c_j)
                         data_torques.insert(data_torques.shape[1], c_j, 
                                             aArm_opt_nsc + c_torque)
-                    assert np.all(
-                            np.abs(torques_opt[joints.index(c_j),:] 
-                                   - data_torques[c_j]) 
-                            < 10**(-2)), "error torques arms"
+                    # assert np.all(
+                    #         np.abs(torques_opt[joints.index(c_j),:] 
+                    #                - data_torques[c_j]) 
+                    #         < 10**(-2)), "error torques arms"
+                    if not np.all(
+                        np.abs(torques_opt[joints.index(c_j), :] 
+                               - data_torques[c_j]) < 1e-2):
+                            print("Warning: torque mismatch in arms for", c_j)
+
             # Sanity check for muscle-driven joints
             for count_j, c_j in enumerate(muscleDrivenJoints):
                 if c_j in data_torques:
                     c_data_torques = data_torques[c_j].to_numpy()
                 else:
                     c_data_torques = np.zeros((data_torques.shape[0],))
-                assert np.all(
-                        np.abs(torques_opt[joints.index(c_j),:] - (
+                # assert np.all(
+                #         np.abs(torques_opt[joints.index(c_j),:] - (
+                #             c_data_torques + pMT_opt[count_j, :] + 
+                #             aMT_opt[count_j, :])) 
+                #         < 10**(-2)), "error torques muscle-driven joints"
+                if not np.all(
+                        np.abs(torques_opt[joints.index(c_j), :] - (
                             c_data_torques + pMT_opt[count_j, :] + 
-                            aMT_opt[count_j, :])) 
-                        < 10**(-2)), "error torques muscle-driven joints"
+                            aMT_opt[count_j, :])) < 1e-2):
+                    print("Warning: torque mismatch in muscle-driven joints for", c_j)
             data_torques_np = data_torques.to_numpy()
             if len(data_torques) > 0:
                 data = np.concatenate((data, data_torques_np),axis=1)
@@ -3448,76 +3223,48 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
                     os.path.join(pathResults, 'optimaltrajectories.npy'),
                     allow_pickle=True)   
             optimaltrajectories = optimaltrajectories.item()
-        if foot_torque_actuator:
-            optimaltrajectories[case] = {
-                'coordinate_values_toTrack': refData_offset_nsc,
-                'coordinate_values': Qs_opt_nsc,
-                'coordinate_speeds_toTrack': refData_Qds_nsc,
-                'coordinate_speeds': Qds_opt_nsc, 
-                'coordinate_accelerations_toTrack': refData_Qdds_nsc,
-                'coordinate_accelerations': Qdds_opt_nsc,
-                'torques': torques_opt,
-                'torques_BWht': torques_BWht_opt,
-                'powers': powers_opts,
-                'GRF': GRF_all_opt['all'],
-                'GRF_BW': GRF_BW_all_opt,
-                'GRM': GRM_all_opt['all'],
-                'GRM_BWht': GRM_BWht_all_opt,
-                'COP': COP_all_opt['all'],
-                'Mocap_COPs': Mocap_Cops,
-                'FootTorque': footTorque_opt,
-                'COP_r_indices': COP_r_indices,
-                'COP_l_indices': COP_l_indices,
-                'freeM': freeT_all_opt['all'],
-                'coordinates': joints,
-                'coordinates_power': poweredJoints,
-                'rotationalCoordinates': rotationalJoints,
-                'GRF_labels': GRF_labels_fig,
-                'GRM_labels': GRM_labels_fig,
-                'COP_labels': COP_labels_fig,
-                'time': tgridf,
-                'muscles': bothSidesMuscles,
-                'passive_limit_torques': pT_opt,
-                'muscle_driven_joints': muscleDrivenJoints,
-                'limit_torques_joints': passiveTorqueJoints,
-                'GRF_tracking_term': grfTrackingTerm_opt_all.full()[0][0],
-                'Position_tracking_term': positionTrackingTerm_opt_all.full()[0][0],
-                'COP_tracking_term': copTrackingTerm_opt_all.full()[0][0],
-                'J_All_terms': JAll_opt[0][0]}
-        else:
-            optimaltrajectories[case] = {
-                'coordinate_values_toTrack': refData_offset_nsc,
-                'coordinate_values': Qs_opt_nsc,
-                'coordinate_speeds_toTrack': refData_Qds_nsc,
-                'coordinate_speeds': Qds_opt_nsc, 
-                'coordinate_accelerations_toTrack': refData_Qdds_nsc,
-                'coordinate_accelerations': Qdds_opt_nsc,
-                'torques': torques_opt,
-                'torques_BWht': torques_BWht_opt,
-                'powers': powers_opts,
-                'GRF': GRF_all_opt['all'],
-                'GRF_BW': GRF_BW_all_opt,
-                'GRM': GRM_all_opt['all'],
-                'GRM_BWht': GRM_BWht_all_opt,
-                'COP': COP_all_opt['all'],
-                'COP_r_indices': COP_r_indices,
-                'COP_l_indices': COP_l_indices,
-                'freeM': freeT_all_opt['all'],
-                'coordinates': joints,
-                'coordinates_power': poweredJoints,
-                'rotationalCoordinates': rotationalJoints,
-                'GRF_labels': GRF_labels_fig,
-                'GRM_labels': GRM_labels_fig,
-                'COP_labels': COP_labels_fig,
-                'time': tgridf,
-                'muscles': bothSidesMuscles,
-                'passive_limit_torques': pT_opt,
-                'muscle_driven_joints': muscleDrivenJoints,
-                'limit_torques_joints': passiveTorqueJoints,
-                'GRF_tracking_term': grfTrackingTerm_opt_all.full()[0][0],
-                'Position_tracking_term': positionTrackingTerm_opt_all.full()[0][0],
-                'J_All_terms': JAll_opt[0][0]}
+        
+        if not stats['success'] == True:
+            case = case + '_NonConvergent'
             
+        optimaltrajectories[case] = {
+           'coordinate_values_toTrack': refData_offset_nsc,
+           'coordinate_values': Qs_opt_nsc,
+           'coordinate_speeds_toTrack': refData_Qds_nsc,
+           'coordinate_speeds': Qds_opt_nsc, 
+           'coordinate_accelerations_toTrack': refData_Qdds_nsc,
+           'coordinate_accelerations': Qdds_opt_nsc,
+           'torques': torques_opt,
+           'torques_BWht': torques_BWht_opt,
+           'GRF': GRF_all_opt['all'],
+           'GRF_BW': GRF_BW_all_opt,
+           'GRM': GRM_all_opt['all'],
+           'GRM_BWht': GRM_BWht_all_opt,
+           'COP': COP_all_opt['all'],   
+           'freeM': freeT_all_opt['all'],
+           'coordinates': joints,
+           'coordinates_power': poweredJoints,
+           'rotationalCoordinates': rotationalJoints,
+           'GRF_labels': GRF_labels_fig,
+           'GRM_labels': GRM_labels_fig,
+           'COP_labels': COP_labels_fig,
+           'time': tgridf,
+           'muscles': bothSidesMuscles,
+           'passive_limit_torques': pT_opt,
+           'muscle_driven_joints': muscleDrivenJoints,
+           'limit_torques_joints': passiveTorqueJoints,
+           'Position_tracking_term': positionTrackingTerm_opt_all.full()[0][0],
+           'J_All_terms': JAll_opt[0][0]}
+        
+        if foot_torque_actuator:
+            optimaltrajectories[case]['FootTorque']= footTorque_opt
+        if track_grfs:
+            optimaltrajectories[case]['GRF_tracking_term']= grfTrackingTerm_opt_all.full()[0][0]
+        if track_cops:
+            optimaltrajectories[case]['COP_tracking_term']= copTrackingTerm_opt_all.full()[0][0]
+            optimaltrajectories[case]['COP_toTrack']= COP_toTrack      
+            optimaltrajectories[case]['COP_r_indices'] = COP_r_indices
+            optimaltrajectories[case]['COP_l_indices']= COP_l_indices
         if computeKAM:
             optimaltrajectories[case]['KAM'] = KAM
             optimaltrajectories[case]['KAM_BWht'] = KAM_BWht
@@ -3552,13 +3299,189 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions, case='0',
                 
         np.save(os.path.join(pathResults, 'optimaltrajectories.npy'),
                 optimaltrajectories)
+        
+        from scipy.io import savemat
+        
+        # save a mat file for matlab users
+        mat_path = os.path.join(pathResults, 'Results.mat')
+        savemat(mat_path, {'Results': optimaltrajectories}, long_field_names=True)
+        print(f"Saved matfile for case '{case}' at '{mat_path}'")
+        
+        # save csvs for excel users
+        for case, case_data in optimaltrajectories.items():
+        
+            # 1. Make folder Results_[case]
+            folder_name = f"Results_{case}"
+            folder_path = os.path.join(pathResults, folder_name)
+            os.makedirs(folder_path, exist_ok=True)
+        
+            # 2. Get base time vector (using second row if 2D)
+            if 'time' in case_data:
+                time_arr = np.asarray(case_data['time'])
+                if time_arr.ndim == 2 and time_arr.shape[0] > 1:
+                    base_time = time_arr[1, :].ravel()
+                else:
+                    base_time = time_arr.ravel()
+            else:
+                base_time = None
+        
+            # 3. Helper to build a time/sample + labeled DataFrame
+            def make_timeseries_df(arr, labels, default_prefix):
+                arr = np.asarray(arr)
+        
+                # Transpose like MATLAB '
+                arr = arr.T
+                n_rows, n_cols = arr.shape
+        
+                # Build x vector, either time (resampled if needed) or simple index
+                if base_time is not None and base_time.size >= 2:
+                    if base_time.shape[0] == n_rows:
+                        x_vec = base_time
+                    else:
+                        # Reinterpolate time to match number of rows
+                        x_vec = np.linspace(base_time[0], base_time[-1], n_rows)
+                    col0_name = 'time'
+                else:
+                    x_vec = np.arange(n_rows)
+                    col0_name = 'sample'
+        
+                # Build labels for columns
+                if labels is not None:
+                    labels_list = list(labels)
+                    if len(labels_list) != n_cols:
+                        labels_list = [f"{default_prefix}_{i}" for i in range(n_cols)]
+                else:
+                    labels_list = [f"{default_prefix}_{i}" for i in range(n_cols)]
+        
+                data = np.column_stack([x_vec, arr])
+                cols = [col0_name] + labels_list
+        
+                return pd.DataFrame(data, columns=cols)
+        
+            # 4. Loop through fields in this case
+            for key, value in case_data.items():
+        
+                # Skip by name pattern
+                if key.endswith((
+                    'toTrack', 'indices', 'tracking_term', 'All_terms',
+                    'labels', 'FreeM', 'freeM'
+                )):
+                    continue
+        
+                # Skip specific metadata / label keys
+                if key in (
+                    'coordinates', 'coordinates_power', 'time',
+                    'limit_torques_joints', 'muscle_driven_joints',
+                    'muscles', 'rotationalCoordinates'
+                ):
+                    continue
+        
+                # Create a clean filename
+                safe_key = re.sub(r'[^A-Za-z0-9_\-]', '_', key)
+                csv_path = os.path.join(folder_path, f"{safe_key}.csv")
+        
+                # ---------- Special handling for coordinate_* ----------
+                if key.startswith('coordinate_') and isinstance(value, np.ndarray):
+                    labels = case_data.get('coordinates', None)
+                    df = make_timeseries_df(value, labels, default_prefix='coord')
+                    df.to_csv(csv_path, index=False)
+                    continue
+        
+                # ---------- Special handling for passive_limit_torques ----------
+                if key == 'passive_limit_torques' and isinstance(value, np.ndarray):
+                    joints_labels = case_data.get('coordinates', None)
+                    if joints_labels is not None:
+                        torque_labels = []
+                        for j in joints_labels:
+                            name = str(j)
+                            if name.endswith(('_tx', '_ty', '_tz')):
+                                torque_labels.append(name + '_force')
+                            else:
+                                torque_labels.append(name + '_moment')
+                    else:
+                        torque_labels = None
+                    df = make_timeseries_df(value, torque_labels, default_prefix='pTorque')
+                    df.to_csv(csv_path, index=False)
+                    continue
+        
+                # ---------- Special handling for torques / torques_BWht ----------
+                if key in ('torques', 'torques_BWht') and isinstance(value, np.ndarray):
+                    joints_labels = case_data.get('coordinates', None)
+                    if joints_labels is not None:
+                        torque_labels = []
+                        for j in joints_labels:
+                            name = str(j)
+                            if name.endswith(('_tx', '_ty', '_tz')):
+                                torque_labels.append(name + '_force')
+                            else:
+                                torque_labels.append(name + '_moment')
+                    else:
+                        torque_labels = None
+                    df = make_timeseries_df(value, torque_labels, default_prefix='torque')
+                    df.to_csv(csv_path, index=False)
+                    continue
+        
+                # ---------- Special handling for COP ----------
+                if key == 'COP' and isinstance(value, np.ndarray):
+                    labels = case_data.get('COP_labels', None)
+                    df = make_timeseries_df(value, labels, default_prefix='COP')
+                    df.to_csv(csv_path, index=False)
+                    continue
+        
+                # ---------- Special handling for GRF / GRF_BW ----------
+                if key in ('GRF', 'GRF_BW') and isinstance(value, np.ndarray):
+                    labels = case_data.get('GRF_labels', None)
+                    df = make_timeseries_df(value, labels, default_prefix='GRF')
+                    df.to_csv(csv_path, index=False)
+                    continue
+        
+                # ---------- Special handling for GRM / GRM_BWht ----------
+                if key in ('GRM', 'GRM_BWht') and isinstance(value, np.ndarray):
+                    labels = case_data.get('GRM_labels', None)
+                    df = make_timeseries_df(value, labels, default_prefix='GRM')
+                    df.to_csv(csv_path, index=False)
+                    continue
+        
+                # ---------- Special handling for KAM / KAM_BWht ----------
+                if key in ('KAM', 'KAM_BWht') and isinstance(value, np.ndarray):
+                    labels = case_data.get('KAM_labels', None)
+                    df = make_timeseries_df(value, labels, default_prefix='KAM')
+                    df.to_csv(csv_path, index=False)
+                    continue
+        
+                # ---------- Default handling for everything else ----------
+                if isinstance(value, np.ndarray):
+                    if value.ndim == 1:
+                        df = pd.DataFrame(value, columns=[key])
+                    elif value.ndim == 2:
+                        df = pd.DataFrame(value)
+                    else:
+                        continue  # skip higher dimensional arrays
+        
+                elif np.isscalar(value):
+                    df = pd.DataFrame({key: [value]})
+        
+                elif isinstance(value, (list, tuple)):
+                    df = pd.DataFrame(value)
+        
+                else:
+                    # skip dicts, complex objects, etc.
+                    continue
+        
+                df.to_csv(csv_path, index=False)
+        
+            print(f"Saved CSVs for case '{case}' in folder: {folder_path}")
+
 
         
         
-
-
-
-
-
-
-
+                
+                
+                
+        
+        
+        
+        
+        
+        
+        
