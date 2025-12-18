@@ -50,8 +50,7 @@
 import os
 import sys
 import numpy as np
-baseDir = os.path.dirname(os.path.abspath(__file__))
-baseDir = os.path.abspath(os.path.join(baseDir, '..'))
+baseDir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(baseDir)
 opensimADDir = os.path.join(baseDir, 'UtilsDynamicSimulations', 'OpenSimAD')
 sys.path.append(opensimADDir)
@@ -61,16 +60,15 @@ from mainOpenSimAD import run_tracking
 from gait_analysis import process_gait_data
 from utilsProcessing import map_stance_phase
 
-#  Inputs 
-
+# ------------------------ USER INPUTS ---------------------------------------
 # Insert your session ID here. This should be automaically generated after 
 # running the batchDownload.py script and should be located in the folder
 # opencap-processing-grf/Data/
 # If your data is somewhere else you can change the filepath in the dataFolder
-# or baseDir variables below
-baseDir =  r"Y:\Users\EMiller\GHRepos_For_Publication\opencap-processing-grf" # Explicit for Emily to work from share drive, delete before github upload
+#  variables below
 # Insert the path to where you want the data has been downloaded.
 dataFolder = os.path.join(baseDir, 'Data')
+
 # Give the sessionID
 session_id = "OpenCapData_6cc72044-d576-4073-865d-b0e2325655b5"
 
@@ -80,8 +78,7 @@ trial_name = 'walk_Optimized'
 # Insert the type of activity you want to simulate
 motion_type = 'walking_grf' # this will call the specific settings for GRF tracking
 
-
-# Give the path to your GRF Data
+# Give the path to your GRF Data, the path below is automatically generated in the batchDownload_ForGRFTrack script
 grf_path = os.path.join(dataFolder, session_id, 'ForceData', trial_name + '_forces.mot')
 
 # Insert the time interval you want to simulate. It is recommended to simulate
@@ -90,19 +87,20 @@ grf_path = os.path.join(dataFolder, session_id, 'ForceData', trial_name + '_forc
 # gait cycles first on the whole trial (will be stored in gait_events) and then 
 # run again with inputs to trim the data based on gait_events output. 
 # Also insert the speed of the treadmill # in m/s. A positive value 
-# indicates that the subject is moving forward. You should ignore this parameter 
-# or set it to 0 if the trial was not measured on a treadmill
-
+# indicates that the subject is moving forward. You should set it to 0 
+# if the trial was not measured on a treadmill
 lowpass_cutoff_frequency = 6  # Apply a lowpass filter with cutoff frequency of 6 Hz
-n_gait_cycles = 2  # Analyze the first 2 gait cycles
+n_gait_cycles = 2  # Analyze the first 2 gait cycles, set to -1 for all gait cycles
 gait_style = "overground"  # Specify the gait style, e.g., treadmill or overground
 trimming_start = 0  # optionally trim data at beginning, if you already trimmed in the batchDownload script this is unneccesary
 trimming_end = 0     # optionally trim data at end
 treadmill_speed = 0
-mask_ips, mask_cont, gait_events, foot_positions, time = process_gait_data(os.path.join(dataFolder, session_id),
-        trial_name, 'l', lowpass_cutoff_frequency, n_gait_cycles, gait_style, trimming_start, trimming_end)
+# ------------------------ END USER INPUTS -----------------------------------
+
 
 # Make sure masks exactly match stance percentages
+mask_ips, mask_cont, gait_events, foot_positions, time = process_gait_data(os.path.join(dataFolder, session_id),
+        trial_name, 'l', lowpass_cutoff_frequency, n_gait_cycles, gait_style, trimming_start, trimming_end)
 n_time = len(time)
 stance_percent_l, stance_percent_r = map_stance_phase(gait_events, time_len=n_time)
 CoP_left_mask  = np.isfinite(stance_percent_l).astype(int)
