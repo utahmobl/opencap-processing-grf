@@ -1,25 +1,11 @@
-# Muscle-driven simulations with OpenSimAD
+# Simulations with OpenSimAD
 
-The examples we provide to generate muscle-driven simulations use OpenSimAD, which is a custom version of OpenSim that supports automatic differentiation (AD). AD is an alternative to finite differences to compute derivatives that is faster in most cases. You can find more details about OpenSimAD and some benchmarking against finite differences in [this publication](https://journals.plos.org/plosone/article/comments?id=10.1371/journal.pone.0217730). Please keep in mind that OpenSimAD does not support all features of OpenSim, you should therefore carefully verify what you are doing should you diverge from the provided examples (eg, if you use a different musculoskeletal model). We will contribute examples to generate muscle-driven simulations using Moco in the near future, which will make it easier to use different OpenSim models.
+The examples we provide to generate muscle-driven simulations use OpenSimAD, which is a custom version of OpenSim that supports automatic differentiation (AD). AD is an alternative to finite differences to compute derivatives that is faster in most cases. You can find more details about OpenSimAD and some benchmarking against finite differences in [this publication](https://journals.plos.org/plosone/article/comments?id=10.1371/journal.pone.0217730). Please keep in mind that OpenSimAD does not support all features of OpenSim, you should therefore carefully verify what you are doing should you diverge from the provided examples (eg, if you use a different musculoskeletal model). In our recent work, OpenSimAD is used as the physics-based component of a hybrid machine learning–simulation framework, enabling efficient and physically consistent estimation of musculoskeletal dynamics, including ground reaction forces, joint moments, and contact forces.
 
 OpenSimAD requires compiling C++ and C code. Everything is automated, but please follow the [specific install requirements](https://github.com/stanfordnmbl/opencap-processing#install-requirements-to-run-muscle-driven-simulations) to make sure you have everything you need (CMake and compiler).
 
-### Getting started running muscle-driven simulations
+### Getting started running simulations
 We recommend starting with `example_kinetics.py` to see how to run dynamic simulations using this repository. The below documentation provides further details about the simulations.
-
-### Overview of the pipeline for muscle-driven simulations
-1. **Process inputs**
-  - [Download the model and the motion file](https://github.com/stanfordnmbl/opencap-processing/blob/main/UtilsDynamicSimulations/OpenSimAD/utilsOpenSimAD.py#L1912) with the coordinate values estimated from videos.
-  - [Adjust the wrapping surfaces](https://github.com/stanfordnmbl/opencap-processing/blob/main/UtilsDynamicSimulations/OpenSimAD/utilsOpenSimAD.py#L1917) of the model to enforce meaningful moment arms (ie, address known bug of wrapping surfaces).
-  - [Add contact spheres](https://github.com/stanfordnmbl/opencap-processing/blob/main/UtilsDynamicSimulations/OpenSimAD/utilsOpenSimAD.py#L1919) to the musculoskeletal model to model foot-ground interactions.
-  - [Generate differentiable external function](https://github.com/stanfordnmbl/opencap-processing/blob/main/UtilsDynamicSimulations/OpenSimAD/utilsOpenSimAD.py#L1921) to leverage AD when solving the optimal control problem.
-    - More details about this process in [this publication](https://journals.plos.org/plosone/article/comments?id=10.1371/journal.pone.0217730) and [this repository](https://github.com/antoinefalisse/opensimAD).
-2. **Fit polynomials to approximate muscle-tendon lenghts and velocities, and moment arms.**
-  - We use polynomial approximations of coordinates values to estimate muscle-tendon lenghts and velocities, and moment arms. We [fit the polynomial coefficients](https://github.com/stanfordnmbl/opencap-processing/blob/main/UtilsDynamicSimulations/OpenSimAD/mainOpenSimAD.py#L541) before solving the optimal control problem. Using polynomial approximations speeds up evaluations of muscle-tendon lenghts and velocities, and moment arms.
-3. **Solve optimal control / trajectory optimization problem**
-- We generate [muscle-driven simulations](https://github.com/stanfordnmbl/opencap-processing/blob/main/UtilsDynamicSimulations/OpenSimAD/mainOpenSimAD.py#L999) that track joint kinematics. The general idea is to solve for the model controls that will drive the musculoskeletal model to closely track the measured kinematics while satisfying the dynamic equations describing muscle and skeletal dynamics and minimizing muscle effort. We use direct collocation methods to solve this problem, and leverage AD through [CasADi](https://web.casadi.org/).
-4. **Process results**
-- From the simulations, we can extract dynamic variables like muscle forces, joint moments, ground reaction forces, or joint contact forces.
 
 ### Overview outputs
 - If your problem converges, you should get a few files under OpenSimData/Dynamics:
@@ -65,6 +51,10 @@ We recommend starting with `example_kinetics.py` to see how to run dynamic simul
       - KAM_labels: labels of knee adduction moments.
       - MCF_labels: labels of medial knee contact fprces.
       - iter_count: number of iterations the problem took to converge.
+ - Folder: Results_{case_name}
+    - Folder with csvs of results contained in optimaltrajectories.npy
+  - Results.mat
+    - .mat file of results contained in optimaltrajectories.npy   
 
 ### Overview files
 - `boundsOpenSimAD.py`: script describing the bounds of the problem variables.
@@ -81,3 +71,4 @@ We recommend starting with `example_kinetics.py` to see how to run dynamic simul
 ### Food for thought / Tips & Tricks
 
 Dynamic simulations of human movement require solving complex optimal control problems. **It is a tedious task with no guarantee of success.** Even if the problem converges (*optimal solution found*), you should always verify that the results are biomechanically meaningful. It is possible that the problem satisfied all constraints but did not converge to the expected solution. You might want to play with the settings (eg, weights of the different terms in the cost function), constraints, and cost function terms to generate simulations that make sense for the particular activity you are interested in. We have gathered some [tips and tricks](https://docs.google.com/document/d/1zgF9PqOaSZHma3vdQnccHz6mc7Fv6AG3fHLNLh4TQuA/edit) in this document.
+
