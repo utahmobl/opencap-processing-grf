@@ -61,7 +61,6 @@ from COP_Predictor import predict_cop_for_trial
 # These correspond to OpenCap session IDs or subject folder names:
 # "OpenCapData_<session_id>" inside the Data directory.
 sessionList = ["6cc72044-d576-4073-865d-b0e2325655b5"]
-#sessionList = ["TestSubject"]
 
 # Gait style for foot kinematics refinement ("overground" or "treadmill")
 gait_style = "overground"
