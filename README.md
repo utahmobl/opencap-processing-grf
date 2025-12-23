@@ -3,7 +3,7 @@
 This repository enables the post-processing of human movement kinematics collected using [OpenCap](opencap.ai). You can run kinematic analyses, download multiple sessions using scripting, and run simulations to estimate kinetics. Building on the original OpenCap processing repository, this codebase implements the hybrid machine learning–simulation pipeline described in Miller et al., improving estimation of ground reaction forces, joint moments, and joint contact forces.
 
 ## Publications
-More information is available in our preprint on biorxiv
+More information is available in our preprint on [biorxiv](https://www.biorxiv.org/content/10.64898/2025.12.19.695562v1)
 
 Miller EY, Tan T, Falisse A, Uhlrich SD, 2025. Integrating Machine Learning with Musculoskeletal Simulation Improves OpenCap Video-Based Dynamics Estimation 
 
