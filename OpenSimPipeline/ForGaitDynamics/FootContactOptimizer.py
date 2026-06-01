@@ -5,6 +5,7 @@ Foot Position Kinematic Optimizer
 @author: Emily Miller
 """
 import os
+import re
 import numpy as np
 import torch
 from pathlib import Path
@@ -106,6 +107,88 @@ OFFSETREMOVED_MARKER_MAPPING = {
     'r_mwrist_study_offsetRemoved': 'r_mwrist',
     'L_mwrist_study_offsetRemoved': 'L_mwrist',
 }
+
+# ---------------------------------------------------------------------
+# NEW: OpenCap monocular marker mapping
+# (use source names from monocular TRCs, map to the same target names used elsewhere)
+# ---------------------------------------------------------------------
+MONOCULAR_MARKER_MAPPING = {
+    # trunk
+    'C7': 'C7',
+    'sternum': 'sternum',
+    'L4': 'L4',
+    'T6': 'T6',
+
+    # pelvis
+    'r_ASIS': 'r.ASIS',
+    'l_ASIS': 'L.ASIS',
+    'r_PSIS': 'r.PSIS',
+    'l_PSIS': 'L.PSIS',
+
+    # lower limb
+    'r_knee': 'r_knee',
+    'l_knee': 'L_knee',
+    'r_mknee': 'r_mknee',
+    'l_mknee': 'L_mknee',
+    'r_ankle': 'r_ankle',
+    'l_ankle': 'L_ankle',
+    'r_mankle': 'r_mankle',
+    'l_mankle': 'L_mankle',
+    'r_calc': 'r_calc',
+    'l_calc': 'L_calc',
+    'r_toe': 'r_toe',
+    'l_toe': 'L_toe',
+    'r_5meta': 'r_5meta',
+    'l_5meta': 'L_5meta',
+
+    # optional aliases (keep these out of pose alias names, only true marker columns)
+    'r_big_toe': 'r_toe',
+    'l_big_toe': 'L_toe',
+
+    # upper limb (if present)
+    'r_shoulder': 'R_Shoulder',
+    'l_shoulder': 'L_Shoulder',
+    'r_elbow': 'r_lelbow',
+    'l_elbow': 'L_lelbow',
+    'r_melbow': 'r_melbow',
+    'l_melbow': 'L_melbow',
+    'r_wrist_radius': 'r_lwrist',
+    'l_wrist_radius': 'L_lwrist',
+    'r_wrist_ulna': 'r_mwrist',
+    'l_wrist_ulna': 'L_mwrist',
+}
+
+# ---------------------------------------------------------------------
+# Filename utilities (normalize and avoid collisions)
+# ---------------------------------------------------------------------
+
+def normalize_trial_stem(trial_stem: str) -> str:
+    """
+    Convert e.g. 'walk01_01' -> 'walk01' by stripping a trailing '_<digits>'.
+
+    Only removes a numeric suffix at the very end.
+    Examples:
+      - walk01_01 -> walk01
+      - walk03_3  -> walk03
+      - trial_A_01 -> trial_A
+      - trial_A_B  -> trial_A_B  (unchanged)
+    """
+    return re.sub(r"_\d+$", "", trial_stem)
+
+
+def make_unique_out_basename(save_dir: str, out_basename: str) -> str:
+    """
+    If <save_dir>/<out_basename>.trc already exists, append _dup2, _dup3, ...
+    Returns a basename (no extension) that is safe to write.
+    """
+    candidate = out_basename
+    k = 2
+    while os.path.exists(os.path.join(save_dir, candidate + ".trc")):
+        candidate = f"{out_basename}_dup{k}"
+        k += 1
+    return candidate
+
+
 # ---------------------------------------------------------------------
 # TRC utilities
 # ---------------------------------------------------------------------
@@ -150,41 +233,42 @@ def TRCload(filename):
 def extract_marker_names(header):
     """
     Extract marker names from TRC header, removing empty entries.
-
-    Returns
-    -------
-    list[str]
     """
     raw_names = header['markername']
     cleaned = [name for name in raw_names if name != '']
     return cleaned
 
 
+def infer_marker_mapping(marker_names, user_mapping=None):
+    """
+    Choose the best marker mapping for this TRC.
+
+    Priority:
+      0) If user_mapping is provided, use it as-is
+      1) offsetRemoved scheme
+      2) legacy *_study scheme
+      3) monocular scheme (fallback)
+    """
+    if user_mapping is not None:
+        return user_mapping
+
+    has_offset_removed = any('offsetremoved' in n.lower() for n in marker_names)
+    if has_offset_removed:
+        return OFFSETREMOVED_MARKER_MAPPING
+
+    has_study_markers = any(n.lower().endswith('_study') or '_study' in n.lower() for n in marker_names)
+    if has_study_markers:
+        return DEFAULT_MARKER_MAPPING
+
+    return MONOCULAR_MARKER_MAPPING
+
+
 def rename_markers(marker_names, marker_mapping=None):
     """
     Rename markers according to a mapping dictionary.
-    
-    Parameters
-    ----------
-    marker_names : list[str]
-        Original marker names.
-    marker_mapping : dict, optional
-        Dictionary mapping old names to new names.
-        If None, uses DEFAULT_MARKER_MAPPING.
-    
-    Returns
-    -------
-    list[str]
-        Renamed marker names.
     """
-    # Decide which marker mapping to use if none was supplied
-    if marker_mapping is None:
-        has_offset_removed = any('offsetremoved' in n.lower() for n in marker_names)
-        if has_offset_removed:
-            marker_mapping = OFFSETREMOVED_MARKER_MAPPING
-        else:
-            marker_mapping = DEFAULT_MARKER_MAPPING
-    
+    marker_mapping = infer_marker_mapping(marker_names, marker_mapping)
+
     renamed = []
     for name in marker_names:
         if name in marker_mapping:
@@ -198,128 +282,192 @@ def filter_markers_by_mapping_keys(marker_names, marker_data, marker_mapping=Non
     """
     Filter markers to only include those present as KEYS in the marker_mapping.
     This should be used BEFORE renaming markers.
-    
-    Parameters
-    ----------
-    marker_names : list[str]
-        Original marker names.
-    marker_data : np.ndarray
-        Marker data array, shape (nSamples, nMarkers*3).
-    marker_mapping : dict, optional
-        Dictionary mapping old names to new names.
-        If None, uses DEFAULT_MARKER_MAPPING.
-    
-    Returns
-    -------
-    filtered_names : list[str]
-        Filtered marker names (original names, not yet renamed).
-    filtered_data : np.ndarray
-        Filtered marker data, shape (nSamples, nFilteredMarkers*3).
     """
-    if marker_mapping is None:
-        marker_mapping = DEFAULT_MARKER_MAPPING
-    
-    # Get the set of desired marker names (KEYS from mapping)
+    marker_mapping = infer_marker_mapping(marker_names, marker_mapping)
+
     desired_markers = set(marker_mapping.keys())
-    
-    # Find which markers to keep
     indices_to_keep = []
     filtered_names = []
-    
+
     for i, marker in enumerate(marker_names):
         if marker in desired_markers:
             indices_to_keep.append(i)
             filtered_names.append(marker)
-    
-    # Filter the data columns
-    # Each marker has 3 columns (X, Y, Z)
+
     col_indices = []
     for idx in indices_to_keep:
-        col_indices.extend([idx*3, idx*3 + 1, idx*3 + 2])
-    
+        col_indices.extend([idx * 3, idx * 3 + 1, idx * 3 + 2])
+
     filtered_data = marker_data[:, col_indices]
-    
+
     return filtered_names, filtered_data
 
 
-def write_trc_file(time, mrkdata, mrknames, directory, file):
+def write_trc_file(time, mrkdata, mrknames, directory, file, units="mm"):
     """
-    Write a TRC file.
+    Write a TRC file that OpenSim can read reliably.
 
-    Parameters
-    ----------
-    time : array_like
-        Vector of times (nSamples).
-    mrkdata : np.ndarray
-        Marker data, shape (nSamples, nMarkers*3).
-    mrknames : list[str]
-        Marker names (length nMarkers).
-    directory : str
-        Output directory.
-    file : str
-        Output base name (no extension).
+    Fixes vs your current version:
+      - Metadata keys/value counts always match (8 keys, 8 values), no extra empty columns.
+      - PathFileType line uses tabs consistently.
+      - Marker-name line uses TWO tabs between marker names (TRC convention for X/Y/Z triplets).
+      - XYZ label line uses single tabs, no trailing tab.
+      - Exactly one blank line after XYZ label line.
+      - Time and marker rows are written with consistent tab separation and precision.
     """
     os.makedirs(directory, exist_ok=True)
 
-    time = np.asarray(time)
+    time = np.asarray(time, dtype=float).reshape(-1)
+    if time.size == 0:
+        raise ValueError("time is empty, cannot write TRC.")
     if time.size < 2:
-        time = np.append(time, 1.0)
+        # OpenSim generally expects at least 2 frames
+        time = np.append(time, time[0] + 0.01)
 
-    T = time[1] - time[0]
-    f = 1.0 / T
+    mrkdata = np.asarray(mrkdata, dtype=float)
+    if mrkdata.ndim != 2:
+        raise ValueError("mrkdata must be a 2D array of shape (nFrames, 3*nMarkers).")
+
     mk, nk = mrkdata.shape
+    if mk != time.size:
+        raise ValueError(f"mrkdata rows ({mk}) must match time length ({time.size}).")
+    if nk % 3 != 0:
+        raise ValueError(f"mrkdata must have 3*nMarkers columns, got {nk}.")
+
     n_markers = nk // 3
+    if len(mrknames) != n_markers:
+        raise ValueError(
+            f"mrknames length ({len(mrknames)}) must match n_markers ({n_markers})."
+        )
+
+    units = units.strip().lower()
+    if units not in ("mm", "m"):
+        raise ValueError("units must be 'mm' or 'm'")
+
+    # Robust sampling rate estimate
+    dt = np.diff(time)
+    dt = dt[np.isfinite(dt)]
+    dt = dt[dt > 0]
+    if dt.size == 0:
+        f_rate = 100.0
+    else:
+        f_rate = 1.0 / float(np.median(dt))
 
     filepath = os.path.join(directory, f"{file}.trc")
+    trc_basename = os.path.basename(filepath)
 
     try:
-        with open(filepath, 'w') as fid:
-            # header
-            fid.write(f"PathFileType  4\t(X/Y/Z) {directory}\n")
-            fid.write("DataRate\tCameraRate\tNumFrames\tNumMarkers\tUnits\tOrigDataRate\tOrigDataStartFrame\tOrigNumFrames\n")
-            fid.write(f"{f:.1f}\t\t{f:.1f}\t\t{mk}\t\t{n_markers}\t\tmm\t{f:.1f}\t1\t{mk}\n")
+        with open(filepath, "w", newline="\n") as fid:
+            # Line 1
+            fid.write(f"PathFileType\t4\t(X/Y/Z)\t{trc_basename}\n")
 
-            # marker names
+            # Line 2 (8 keys)
+            fid.write(
+                "DataRate\tCameraRate\tNumFrames\tNumMarkers\tUnits\tOrigDataRate\tOrigDataStartFrame\tOrigNumFrames\n"
+            )
+
+            # Line 3 (8 values, SINGLE tabs, no empty fields)
+            fid.write(
+                f"{f_rate:.2f}\t{f_rate:.2f}\t{mk}\t{n_markers}\t{units}\t{f_rate:.2f}\t1\t{mk}\n"
+            )
+
+            # Line 4: marker names with two tabs between names
             fid.write("Frame#\tTime\t")
-            for m in mrknames:
-                fid.write(f"{m}\t\t\t")
+            fid.write("\t\t".join([str(m) for m in mrknames]))
             fid.write("\n")
 
-            # XYZ labels
+            # Line 5: XYZ labels (single tabs)
             fid.write("\t\t")
-            for i in range(1, n_markers + 1):
-                fid.write(f"X{i}\tY{i}\tZ{i}\t")
-            fid.write("\n\n")
+            fid.write("\t".join([f"X{i}\tY{i}\tZ{i}" for i in range(1, n_markers + 1)]))
+            fid.write("\n")
 
-            # data rows
+            # Line 6: blank line
+            fid.write("\n")
+
+            # Data lines
             for i in range(mk):
-                fid.write(f"{i+1}\t{time[i]:.5f}")
-                fid.write("\t" + "\t".join(f"{val:.3f}" for val in mrkdata[i, :]))
+                fid.write(f"{i + 1}\t{time[i]:.8f}")
+                # Write all coords, single-tab separated
+                fid.write("".join(f"\t{val:.6f}" for val in mrkdata[i, :]))
                 fid.write("\n")
 
         return True
+
     except Exception as e:
         print(f"Error writing TRC: {e}")
         return False
 
 
+
+def save_unmodified_trc(
+    trc_path,
+    save_dir,
+    rename_markers_on_save=True,
+    filter_markers_on_save=True,
+    marker_mapping=None,
+):
+    """
+    Load a TRC and write it out unmodified in coordinates, but with
+    the same naming convention as the optimized files.
+    """
+    os.makedirs(save_dir, exist_ok=True)
+
+    header, data, header_lines = TRCload(trc_path)
+    data = data[:, ~np.all(np.isnan(data), axis=0)]
+
+    frame = data[:, 0]
+    times = data[:, 1]
+    marker_xyz = data[:, 2:]
+
+    marker_names = extract_marker_names(header)
+    marker_names = [n for n in marker_names if n not in ['Frame#', 'Time']]
+
+    if filter_markers_on_save:
+        marker_names, marker_xyz = filter_markers_by_mapping_keys(
+            marker_names,
+            marker_xyz,
+            marker_mapping
+        )
+
+    if rename_markers_on_save:
+        output_marker_names = rename_markers(marker_names, marker_mapping)
+    else:
+        output_marker_names = marker_names
+
+    trial_stem_raw = os.path.splitext(os.path.basename(trc_path))[0]
+    trial_stem_norm = normalize_trial_stem(trial_stem_raw)
+
+    out_basename = f"MarkerData_optfeet_{trial_stem_norm}"
+    out_basename = make_unique_out_basename(save_dir, out_basename)
+
+    write_trc_file(
+        time=times,
+        mrkdata=marker_xyz,
+        mrknames=output_marker_names,
+        directory=save_dir,
+        file=out_basename,
+    )
+
+    return os.path.join(save_dir, out_basename + '.trc')
+
+
 # ---------------------------------------------------------------------
 # Foot marker utilities
 # ---------------------------------------------------------------------
-# for backwards and forwards compatability with various opencap marker names
+
 def select_foot_marker_names(marker_names):
     """
     Select foot marker names with priority:
     1) *_study_offsetRemoved
     2) *_study
-    3) base name (e.g., r_toe, L_calc)
+    3) monocular/base name
 
     Returns a list in the order:
     [L_toe_variant, L_calc_variant, r_toe_variant, r_calc_variant]
     """
     priority_map = {
-        'L_toe':  ['L_toe_study_offsetRemoved', 'L_toe_study', 'L_toe'],
-        'L_calc': ['L_calc_study_offsetRemoved', 'L_calc_study', 'L_calc'],
+        'L_toe':  ['L_toe_study_offsetRemoved', 'L_toe_study', 'L_toe', 'l_toe'],
+        'L_calc': ['L_calc_study_offsetRemoved', 'L_calc_study', 'L_calc', 'l_calc'],
         'r_toe':  ['r_toe_study_offsetRemoved', 'r_toe_study', 'r_toe'],
         'r_calc': ['r_calc_study_offsetRemoved', 'r_calc_study', 'r_calc'],
     }
@@ -342,86 +490,51 @@ def select_foot_marker_names(marker_names):
 
 
 def create_foot_marker_matrix(foot_marker_names, markernames, marker_positions):
-        """
-        Create a foot marker matrix with shape (1, 4, 3, n_samples).
-        
-        Parameters:
-        - foot_marker_names: List of foot marker names (e.g., ['L_toe_study_offsetRemoved', 'L_calc_study_offsetRemoved', ...])
-        - markernames: List of all marker names that correspond to columns in marker_positions
-        - marker_positions: A 2D numpy array of shape (n_samples, 531) representing 3D positions of markers
-        
-        Returns:
-        - foot_marker_matrix: A numpy array of shape (1, 4, 3, n_samples) containing the x, y, z coordinates of the foot markers
-        """
-        
-        # Extract the number of samples from the shape of marker_positions
-        n_samples = marker_positions.shape[0]  # First dimension represents n_samples
-        
-        # Initialize the foot marker matrix with zeros, shape (1, 4, 3, n_samples)
-        foot_marker_matrix = np.zeros((1, 4, 3, n_samples))
-        
-        # Loop through the foot marker names and extract the coordinates
-        for i, foot_marker in enumerate(foot_marker_names):
-            # Find the marker index in markernames (assuming we know the position)
-            marker_index = markernames.index(foot_marker)
-            
-            # Each marker has x, y, and z in consecutive columns, so extract them
-            foot_marker_matrix[0, i, 0, :] = marker_positions[:, marker_index * 3]  # x coordinates
-            foot_marker_matrix[0, i, 1, :] = marker_positions[:, marker_index * 3 + 1]  # y coordinates
-            foot_marker_matrix[0, i, 2, :] = marker_positions[:, marker_index * 3 + 2]  # z coordinates
-        
-        return foot_marker_matrix
+    """
+    Create a foot marker matrix with shape (1, 4, 3, n_samples).
+    """
+    n_samples = marker_positions.shape[0]
+    foot_marker_matrix = np.zeros((1, 4, 3, n_samples))
+
+    for i, foot_marker in enumerate(foot_marker_names):
+        marker_index = markernames.index(foot_marker)
+        foot_marker_matrix[0, i, 0, :] = marker_positions[:, marker_index * 3]
+        foot_marker_matrix[0, i, 1, :] = marker_positions[:, marker_index * 3 + 1]
+        foot_marker_matrix[0, i, 2, :] = marker_positions[:, marker_index * 3 + 2]
+
+    return foot_marker_matrix
 
 
 def make_contact_mask(coordinates, mask_ips, mask_cont, toe_threshold, heel_threshold):
     """
     Build a contact mask from vertical coordinates.
 
-    Parameters
-    ----------
-    coordinates : np.ndarray
-        Shape (T, 4) y coordinates for [L_toe, L_heel, R_toe, R_heel].
-    mask_ips : np.ndarray
-        Ipsilateral mask, length T.
-    mask_cont : np.ndarray
-        Contralateral mask, length T.
-    toe_threshold : float
-    heel_threshold : float
-
-    Returns
-    -------
-    np.ndarray
-        Contact mask, shape (T, 4), with 0 or 1 entries.
+    coordinates: shape (T, 4) for [L_toe, L_heel, R_toe, R_heel]
     """
     thresholds = []
 
-    # 0: ipsilateral toe
     cond0 = coordinates[mask_cont == 1, 0]
     row0_min = np.nanmin(cond0)
     thr0 = row0_min + toe_threshold
     thresholds.append(thr0)
 
-    # 1: ipsilateral heel
     cond1 = coordinates[mask_cont == 1, 1]
     row1_min = np.nanmin(cond1)
     thr1 = row1_min + heel_threshold
     thresholds.append(thr1)
 
-    # 2: contralateral toe
     cond2 = coordinates[mask_ips == 1, 2]
     row2_min = np.nanmin(cond2)
     thr2 = row2_min + toe_threshold
     thresholds.append(thr2)
 
-    # 3: contralateral heel
     cond3 = coordinates[mask_ips == 1, 3]
     row3_min = np.nanmin(cond3)
     thr3 = row3_min + heel_threshold
     thresholds.append(thr3)
 
-    thresholds = np.array(thresholds)[None, :]  # shape (1,4)
+    thresholds = np.array(thresholds)[None, :]
 
-    # start from all ones where below threshold, zeros above
     coords_mod = np.where(coordinates < thresholds, 1, coordinates)
     coords_mod[:, 0:2] = coords_mod[:, 0:2] * mask_ips[:, None]
     coords_mod[:, 2:4] = coords_mod[:, 2:4] * mask_cont[:, None]
@@ -436,36 +549,25 @@ def make_contact_mask(coordinates, mask_ips, mask_cont, toe_threshold, heel_thre
 
 class FootPositionOptimizer:
     def __init__(self,
-                 marker_positions, 
-                 frame_rate, marker_names, 
-                 foot_marker_names, 
+                 marker_positions,
+                 frame_rate, marker_names,
+                 foot_marker_names,
                  contact,
                  feet_original,
-                 device='cpu', 
+                 device='cpu',
                  print_loss_terms=False,
                  weights=None):
         """
         Initialize the optimizer with the given marker positions and names.
-        
-        Args:
-            marker_positions (np.array): 3D marker positions (T x N x 3), where T is number of frames, N is number of markers.
-            marker_names (list): List of marker names in order.
-            foot_marker_names (list): List of foot marker names that should be optimized.
-            device (str): Device to run the optimization on ('cpu' or 'cuda').
-            print_loss_terms (bool): Whether to print loss terms during optimization.
         """
-        self.marker_positions = marker_positions  # (T x N x 3) 3D marker positions
-        self.marker_names = marker_names  # List of marker names in order
-        self.foot_marker_names = foot_marker_names  # Foot marker names to optimize
-        self.foot_names = foot_marker_names  # ['LBigToe', 'LHeel', 'RBigToe', 'RHeel']
-        self.n_frames = self.marker_positions.shape[0]  # Number of frames
+        self.marker_positions = marker_positions
+        self.marker_names = marker_names
+        self.foot_marker_names = foot_marker_names
+        self.foot_names = foot_marker_names
+        self.n_frames = self.marker_positions.shape[0]
         self.contact = contact
-        
-       
-        # Map foot names to indices (assuming foot_names correspond to the markers in the 3D data)
-        # You need to ensure that the correct index is used for each foot marker
-        self.foot_name_to_index = {}
 
+        self.foot_name_to_index = {}
         for foot_marker in foot_marker_names:
             if foot_marker in marker_names:
                 index = marker_names.index(foot_marker)
@@ -473,20 +575,19 @@ class FootPositionOptimizer:
             else:
                 raise ValueError(f"Marker {foot_marker} not found in the marker names list.")
 
-
         self.device = device
         self.frame_rate = frame_rate
-        self.iterations = 10000  # You can adjust this based on your needs
-        self.conv_tol = 1e-10  # Convergence tolerance
-        self.loss_frequency_init = 1.0  # Initialize this value based on your needs
-        self.foot_position_loss_init = 1.0  # Initialize the foot position loss scaling factor
-        self.offset_deriv_loss_init = 1.0  # Initialize the offset loss scaling factor
+        self.iterations = 10000
+        self.conv_tol = 1e-10
+        self.loss_frequency_init = 1.0
+        self.foot_position_loss_init = 1.0
+        self.offset_deriv_loss_init = 1.0
         if weights is None:
             self.weights = {
-                            'contact_velocity': 10,
-                            'contact_position': 1000,
-                            'flat_floor': 10,
-                            'offset_deriv': 0.0001
+                'contact_velocity': 10,
+                'contact_position': 1000,
+                'flat_floor': 10,
+                'offset_deriv': 0.0001
             }
         else:
             self.weights = weights
@@ -494,151 +595,91 @@ class FootPositionOptimizer:
         reshaped_marker_positions = self.marker_positions.reshape(self.marker_positions.shape[0], -1, 3)
 
         for foot_marker, index in self.foot_name_to_index.items():
-           # print(f"Processing marker: {foot_marker}, index: {index}")
-
-            # Check if the index is valid, i.e., within the bounds of reshaped_marker_positions
             if index < reshaped_marker_positions.shape[1]:
-                # Extract Z positions (Z is the 3rd column, index 2)
-                marker_z_positions = reshaped_marker_positions[:, index, 2]  # Extract Z positions for this marker
-                #print(f"Z positions for {foot_marker}: {marker_z_positions}")
+                _ = reshaped_marker_positions[:, index, 2]
             else:
                 print(f"Warning: Index {index} for {foot_marker} is out of bounds.")
-        
-        
-        # Initialize the print_loss_terms flag
+
         self.print_loss_terms = print_loss_terms
 
-        # initialize design vars
         self.design_vars = []
-
-        self.offset = torch.zeros((1,self.n_frames,1,3),dtype=torch.float32, device=self.device,requires_grad = True)
-        self.offset.requires_grad = True
-
+        self.offset = torch.zeros(
+            (1, self.n_frames, 1, 3),
+            dtype=torch.float32,
+            device=self.device,
+            requires_grad=True
+        )
         self.design_vars.append(self.offset)
 
-        self.feet_original = feet_original # TODO CHECK DIMENSIONS (1,T,4,3) & make sure torched
-        self.feet = self.feet_original # for initial pass thru loss terms
+        self.feet_original = feet_original
+        self.feet = self.feet_original
 
-                
-        # Handle contact position loss initialization
         if 'contact_position' in self.weights and self.weights['contact_position'] > 0:
-            # Precompute the starts and ends of stretches of 1s in contact
-            self.contact_mask = self.debounced_threshold(self.contact)  # Assuming 'contact' exists
-            # Padding the contact mask for boundary conditions
-            padded_mask = torch.cat([torch.zeros(1, self.contact_mask.shape[1], dtype=torch.bool), self.contact_mask, torch.zeros(1, self.contact_mask.shape[1], dtype=torch.bool)])
-            # Calculate where contact starts and ends
+            self.contact_mask = self.debounced_threshold(self.contact)
+            padded_mask = torch.cat(
+                [
+                    torch.zeros(1, self.contact_mask.shape[1], dtype=torch.bool),
+                    self.contact_mask,
+                    torch.zeros(1, self.contact_mask.shape[1], dtype=torch.bool),
+                ]
+            )
             self.contact_starts = (padded_mask[:-1] == False) & (padded_mask[1:] == True)
             self.contact_ends = (padded_mask[:-1] == True) & (padded_mask[1:] == False)
-            # Precompute the contact position loss
             self.contact_position_loss_init = self.loss_contact_position().clone().detach()
-        
-        # Handle contact velocity loss initialization
+
         if 'contact_velocity' in self.weights and self.weights['contact_velocity'] > 0:
             self.contact_velocity_loss_init = self.loss_contact_velocity().clone().detach()
-       
-        # Handle flat floor loss initialization
+
         if 'flat_floor' in self.weights and self.weights['flat_floor'] > 0:
             self.flat_floor_loss_init = self.loss_flat_floor().clone().detach()
-            
-        # Handle offset derivative loss initialization
+
         if 'offset_deriv' in self.weights and self.weights['offset_deriv'] > 0:
             self.offset_deriv_loss_init = self.loss_offset_deriv().clone().detach()
 
     def add_offset(self):
-        self.feet = self.feet_original + self.offset # TODO CHECK DIMENSIONS
+        self.feet = self.feet_original + self.offset
         return
 
-    def loss_contact_position(self,scale=1):
-        # position shouldn't change during a contact phase
+    def loss_contact_position(self, scale=1):
         position_var_loss = 0
-        
-        key3d_feet = self.feet# TODO CHECK DIMENSIONS...it wants (1,T,nFootmarkers,3) [note... .unsqueeze(0) may help]
+        key3d_feet = self.feet
 
         for n in range(len(key3d_feet)):
             start_indices = torch.where(self.contact_starts[:, n])[0]
             end_indices = torch.where(self.contact_ends[:, n])[0]
-            
-            # sum across directions of variance in each direction of foot positions in each contact stretch.
-            # The position of the foot keypoint can change between contact phases, but should stay the same within one.
-            # This should be more powerful than the velocity loss above for long standing activities.
-            variances = [torch.var(key3d_feet[:,start:end, n,:],axis=1).sum() for start, end in zip(start_indices, end_indices) if end > start]
+            variances = [
+                torch.var(key3d_feet[:, start:end, n, :], axis=1).sum()
+                for start, end in zip(start_indices, end_indices)
+                if end > start
+            ]
             position_var_loss += torch.sum(torch.stack(variances)) if variances else torch.tensor(0.0)
 
-        # if self.print_loss_terms:
-        #     print('contact position loss:' , (position_var_loss/scale).detach().cpu().numpy())
-        
-        return position_var_loss/scale
+        return position_var_loss / scale
 
-    def loss_contact_velocity(self,scale=1):
-        # weight 0 velocity by contact probability
-        # contact: L_toe, L_heel, R_toe, R_heel
-        
-        # velocity loss
-        #key3d_feet = self.feet[:,:,self.foot_name_to_index,:]
-        key3d_feet = self.feet 
+    def loss_contact_velocity(self, scale=1):
+        key3d_feet = self.feet
         speed_feet = self.compute_speed(key3d_feet, self.frame_rate)
         contact_mask_expanded = self.contact.unsqueeze(0).unsqueeze(2)
+        contact_loss = ((contact_mask_expanded * speed_feet) ** 2).sum()
+        return contact_loss / scale
 
-        contact_loss = ((contact_mask_expanded * speed_feet)**2).sum()
-        
-   #     print('contact velocity loss: ' , (contact_loss/scale).detach().cpu().numpy())
-
-        return contact_loss/scale
-    
-    def loss_offset_deriv(self,scale = 1, diff_n = 1):
-        # weight 0 velocity by contact probability
-        # contact: L_toe, L_heel, R_toe, R_heel
-        
-        # velocity loss
-        #key3d_feet = self.feet[:,:,self.foot_name_to_index,:]
+    def loss_offset_deriv(self, scale=1, diff_n=1):
         func_offset = self.offset.detach()
-        #func_offset = func_offset[:,:,:,1].squeeze()   
-        func_offset = func_offset[:,:,:,1]
-
-     
-        # Ensure the tensor is on the right device (e.g., CPU or GPU)
+        func_offset = func_offset[:, :, :, 1]
         func_offset = func_offset.to(torch.float32)
-         
-         # Calculate the time interval between frames
         dt = 1.0 / self.frame_rate
-         
-         # Compute the difference in position between consecutive frames
         offset_diff = torch.diff(func_offset, dim=1, n=diff_n)
-         
-         # Check if offset_diff is empty (i.e., no valid difference)
         if offset_diff.numel() == 0:
-           #  print("Warning: No valid offset differences to compute.")
-             return torch.tensor(0.0, device=self.device)  # Return a default value if no valid differences
-         
-         # Compute velocity by dividing the position difference by the time interval
+            return torch.tensor(0.0, device=self.device)
         offset_velocity = offset_diff / dt**diff_n
-         
-         # Check for invalid velocity values
-         
-         # Ensure we have the correct shape by replicating the first frame's velocity
         offset_velocity = torch.cat([offset_velocity[:, 0:1, :], offset_velocity], dim=1)
-         
-         # Compute the average velocity by calculating the norm (magnitude) of the velocity vector
         average_velocity = torch.norm(offset_velocity, dim=-1, keepdim=True).sum()
         average_velocity = average_velocity.detach().to(torch.float64)
-        
-           
-       # print('offset 2nd derivative loss: ', average_velocity.detach().cpu().numpy())
-        
         return average_velocity
-    
-    def debounced_threshold(self,v_mask, high_thresh=.5, low_thresh=.5, min_stretch_len=3):
+
+    def debounced_threshold(self, v_mask, high_thresh=.5, low_thresh=.5, min_stretch_len=3):
         """
         Apply a debounced threshold to a TxN matrix.
-        
-        Args:
-        - v_mask (torch.Tensor): A TxN matrix.
-        - high_thresh (float): Threshold for switching from False to True.
-        - low_thresh (float): Threshold for switching from True to False.
-        - min_stretch_len (int): Minimum length of a stretch to trigger a state change.
-        
-        Returns:
-        - torch.Tensor: The debounced thresholded TxN matrix.
         """
         T, N = v_mask.shape
         debounced = torch.zeros_like(v_mask, dtype=torch.bool)
@@ -661,100 +702,64 @@ class FootPositionOptimizer:
 
         return debounced
 
-
     def compute_speed(self, key_3d, frame_rate, diff_n=1):
         """
         Compute the velocity of points in a 3D trajectory.
-
-        :param key_3d: Tensor or numpy array of shape (B, T, N, 3), where B is batch size, T is time, N is number of markers, and 3 represents XYZ coordinates.
-        :param frame_rate: Frame rate of the data (frames per second).
-        :param diff_n: The number of frames over which the difference should be computed.
-        :return: Tensor of speeds (B, T, N, 1).
+        key_3d: (B, T, N, 3)
         """
-        # If key_3d is a numpy array, convert it to a tensor
         if isinstance(key_3d, np.ndarray):
             key_3d = torch.tensor(key_3d, dtype=torch.float32)
 
-        # Ensure the tensor is on the right device (e.g., CPU or GPU)
         key_3d = key_3d.to(torch.float32)
-
-        # Calculate the time interval between frames
         dt = 1.0 / frame_rate
-
-        # Compute the difference in position between consecutive frames
         position_diff = torch.diff(key_3d, dim=1, n=diff_n)
-
-        # Compute velocity by dividing the position difference by the time interval
         velocity = position_diff / dt**diff_n
-
-        # Ensure we have the correct shape by replicating the first frame's velocity
-        # Remove extra indices and reshape if necessary
         velocity = torch.cat([velocity[:, 0:1, :], velocity], dim=1)
-
-        # Compute the average velocity by calculating the norm (magnitude) of the velocity vector
         average_velocity = torch.norm(velocity, dim=-1, keepdim=True)
-
         return average_velocity
-    
+
     def loss_flat_floor(self, scale=1):
-        # compute the variance in y-position of foot markers when they are on the ground, as defined by the contact mask
-        # this is only valid if all foot contact is on a flat floor
-        key3d_feet_y = self.feet[:,:,:,1].squeeze()
-        masked_feet_y = key3d_feet_y[self.contact_mask] # TODO CHECK DIMENSIONS...SHOULD BE RIGHT
+        key3d_feet_y = self.feet[:, :, :, 1].squeeze()
+        masked_feet_y = key3d_feet_y[self.contact_mask]
         loss = torch.var(masked_feet_y)
-
-        # if self.print_loss_terms:
-        #     print('flat floor loss:' , (loss/scale).detach().cpu().numpy())
-
-        return loss/scale
+        return loss / scale
 
     def objective_function(self):
         loss = 0
-        if 'contact_position' in self.weights and self.weights['contact_position'] > 0:  
+        if 'contact_position' in self.weights and self.weights['contact_position'] > 0:
             loss += self.weights['contact_position'] * self.loss_contact_position(scale=self.contact_position_loss_init)
-        if 'contact_velocity' in self.weights and self.weights['contact_velocity'] > 0: 
+        if 'contact_velocity' in self.weights and self.weights['contact_velocity'] > 0:
             loss += self.weights['contact_velocity'] * self.loss_contact_velocity(scale=self.contact_velocity_loss_init)
         if 'flat_floor' in self.weights and self.weights['flat_floor'] > 0:
             loss += self.weights['flat_floor'] * self.loss_flat_floor(scale=self.flat_floor_loss_init)
         if 'offset_deriv' in self.weights and self.weights['offset_deriv'] > 0:
-            loss += self.weights['offset_deriv'] * self.loss_offset_deriv(scale=self.offset_deriv_loss_init)      
+            loss += self.weights['offset_deriv'] * self.loss_offset_deriv(scale=self.offset_deriv_loss_init)
         return loss
-    
+
     def optimize(self):
-        # Create an L-BFGS optimizer
-        optimizer = torch.optim.LBFGS(self.design_vars,
-                                      lr = 2,
-                                      tolerance_change=self.conv_tol,
-                                      line_search_fn="strong_wolfe")
-    
-        # Define the closure function that reevaluates the model
+        optimizer = torch.optim.LBFGS(
+            self.design_vars,
+            lr=2,
+            tolerance_change=self.conv_tol,
+            line_search_fn="strong_wolfe"
+        )
+
         def closure():
             optimizer.zero_grad()
             self.add_offset()
             self.loss = self.objective_function()
-          #  print('loss: ', self.loss.detach().cpu().numpy())
             self.loss.backward()
             return self.loss
-    
-        # Optimization loop
+
         objective_values = torch.zeros(self.iterations)
-        for i in range(self.iterations):  
+        for i in range(self.iterations):
             optimizer.step(closure)
             objective_values[i] = self.loss.clone().detach().cpu()
             self.last_loss = self.loss.clone().detach().cpu()
 
-        # # Print the loss function components multiplied by their weights, if the weight term exists
-        # if 'contact_velocity' in self.weights and self.weights['contact_velocity'] > 0:
-        #     print('weighted contact velocity loss: ', self.weights['contact_velocity'] * self.loss_contact_velocity(scale=self.contact_velocity_loss_init).detach().cpu().numpy())
-        # if 'contact_position' in self.weights and self.weights['contact_position'] > 0:
-        #     print('weighted contact position loss: ', self.weights['contact_position'] * self.loss_contact_position(scale=self.contact_position_loss_init).detach().cpu().numpy())
-        # if 'flat_floor' in self.weights and self.weights['flat_floor'] > 0:
-        #     print('weighted flat floor loss: ', self.weights['flat_floor'] * self.loss_flat_floor().detach().cpu().numpy())
-        # if 'offset_deriv' in self.weights and self.weights['offset_deriv'] > 0:
-        #     print('weighted offset 2nd derivative loss: ', self.weights['offset_deriv'] * self.loss_offset_deriv(scale=self.offset_deriv_loss_init).detach().cpu().numpy())
         output = {
-                    'offset':self.offset.detach(),
-                  }
+            'offset': self.offset.detach(),
+        }
         return output
 
 
@@ -786,129 +791,164 @@ def refine_foot_kinematics_trc(
     """
     Refine foot kinematics for a single TRC and save the updated TRC.
 
-    Parameters
-    ----------
-    trc_path : str
-        Path to input TRC.
-    session_dir : str
-        Path to session directory for gait analysis.
-    save_dir : str
-        Directory to save refined TRC.
-    lowpass_cutoff_frequency : float
-        Cutoff frequency for lowpass filter in gait analysis.
-    n_gait_cycles : int
-        Number of gait cycles to analyze.
-    gait_style : str
-        Gait style ('overground' or 'treadmill').
-    trimming_start : float
-        Time to trim from start (seconds).
-    trimming_end : float
-        Time to trim from end (seconds).
-    frame_rate : float
-        Frame rate of the TRC data.
-    toe_threshold : float
-        Vertical threshold for toe contact detection.
-    heel_threshold : float
-        Vertical threshold for heel contact detection.
-    foot_marker_names : list[str], optional
-        Foot marker names. If None, auto-detected.
-    device : str
-        Device for optimization ('cpu' or 'cuda').
-    print_loss_terms : bool
-        Whether to print loss terms during optimization.
-    weights : dict, optional
-        Custom weights for loss terms.
-    side : str
-        'l' or 'r' for ipsilateral leg in gait analysis.
-    rename_markers_on_save : bool
-        If True, rename markers using marker_mapping after optimization.
-    filter_markers_on_save : bool
-        If True, filter markers to only include those in marker_mapping BEFORE optimization.
-        This keeps only markers that are KEYS in the mapping dictionary, then renames them
-        to the VALUES after optimization. This ensures no duplicate markers in output.
-    marker_mapping : dict, optional
-        Dictionary mapping old marker names to new names.
-        If None and rename_markers_on_save or filter_markers_on_save is True, 
-        uses DEFAULT_MARKER_MAPPING.
-
-    Returns
-    -------
-    str
-        Full path to the refined TRC.
+    Notes on naming:
+      - trial_stem_raw is used for gait processing lookups (process_gait_data)
+      - trial_stem_norm is used for output file naming (deduplicated / normalized)
     """
     os.makedirs(save_dir, exist_ok=True)
 
-    # infer trial name from TRC filename
     trc_basename = os.path.basename(trc_path)
-    # if trc_basename.endswith('_videoAndMocap.trc'):
-    #     trial_name = trc_basename.replace('_videoAndMocap.trc', '')
-    # else:
-    trial_name = os.path.splitext(trc_basename)[0]
+    trial_stem_raw = os.path.splitext(trc_basename)[0]
+    trial_stem_norm = normalize_trial_stem(trial_stem_raw)
 
-    # gait masks
-    mask_ips, mask_cont, gait_events, foot_positions, time = process_gait_data(
-        session_dir=session_dir,
-        trial_name=trial_name,
-        leg=side,
-        lowpass_cutoff_frequency=lowpass_cutoff_frequency,
-        n_gait_cycles=n_gait_cycles,
-        gait_style=gait_style,
-        trimming_start=trimming_start,
-        trimming_end=trimming_end,
-    )
+    # --------------------------------------------------------------
+    # 1) Iterative gait detection with small trimming increments
+    # --------------------------------------------------------------
+    step = 0.1        # seconds added on each side per attempt
+    max_extra = 0.5   # max extra trimming on each side
+    extra_values = np.arange(0.0, max_extra + 1e-9, step)
 
-    # load TRC
+    gait_ok = False
+    last_error = None
+    used_trim_start = trimming_start
+    used_trim_end = trimming_end
+
+    for extra in extra_values:
+        ts = trimming_start + extra
+        te = trimming_end + extra
+        try:
+            mask_ips, mask_cont, gait_events, foot_positions, time = process_gait_data(
+                session_dir=session_dir,
+                trial_name=trial_stem_raw,  # keep RAW here
+                leg=side,
+                lowpass_cutoff_frequency=lowpass_cutoff_frequency,
+                n_gait_cycles=n_gait_cycles,
+                gait_style=gait_style,
+                trimming_start=ts,
+                trimming_end=te,
+            )
+            used_trim_start = ts
+            used_trim_end = te
+            gait_ok = True
+            if extra > 0:
+                print(
+                    f"  Gait events fixed for {trial_stem_raw} "
+                    f"with trimming_start={used_trim_start:.2f}s, "
+                    f"trimming_end={used_trim_end:.2f}s"
+                )
+            break
+
+        except (ValueError, IndexError) as e:
+            msg = str(e)
+            last_error = e
+
+            if isinstance(e, ValueError) and "The ordering of gait events is not correct" in msg:
+                print(
+                    f"  Gait events not in correct order for {trial_stem_raw} "
+                    f"with trimming_start={ts:.2f}s, trimming_end={te:.2f}s. "
+                    "Trying a bit more trimming."
+                )
+                continue
+
+            if isinstance(e, IndexError):
+                print(
+                    f"  Gait processing IndexError for {trial_stem_raw} "
+                    f"with trimming_start={ts:.2f}s, trimming_end={te:.2f}s: {e}. "
+                    "Trying a bit more trimming."
+                )
+                continue
+
+            raise
+
+    if not gait_ok:
+        print(
+            f"  Failed to obtain valid gait events for {trial_stem_raw} "
+            "even after iterative trimming. Writing unmodified TRC."
+        )
+        header, data, header_lines = TRCload(trc_path)
+        data = data[:, ~np.all(np.isnan(data), axis=0)]
+
+        frame = data[:, 0]
+        times = data[:, 1]
+        marker_xyz = data[:, 2:]
+
+        marker_names = extract_marker_names(header)
+        marker_names = [n for n in marker_names if n not in ['Frame#', 'Time']]
+
+        if filter_markers_on_save:
+            marker_names, marker_xyz = filter_markers_by_mapping_keys(
+                marker_names,
+                marker_xyz,
+                marker_mapping
+            )
+
+        if rename_markers_on_save:
+            output_marker_names = rename_markers(marker_names, marker_mapping)
+        else:
+            output_marker_names = marker_names
+
+        out_basename = f"MarkerData_optfeet_{trial_stem_norm}"
+        out_basename = make_unique_out_basename(save_dir, out_basename)
+
+        write_trc_file(
+            time=times,
+            mrkdata=marker_xyz,
+            mrknames=output_marker_names,
+            directory=save_dir,
+            file=out_basename,
+        )
+        return os.path.join(save_dir, out_basename + '.trc')
+
+    # --------------------------------------------------------------
+    # 2) Load TRC and apply the same final trimming
+    # --------------------------------------------------------------
     header, data, header_lines = TRCload(trc_path)
     data = data[:, ~np.all(np.isnan(data), axis=0)]
 
     frame = data[:, 0]
     times = data[:, 1]
     marker_xyz = data[:, 2:]
-    
+
     t = np.round(times, 6)
-    
-    # Total duration
     duration = t[-1] - t[0]
-    
-    # Basic sanity checks
-    if trimming_start < 0 or trimming_end < 0:
-        raise ValueError(f"trimming_start and trimming_end must be >= 0, got {trimming_start}, {trimming_end}")
-    
-    if trimming_start + trimming_end >= duration:
+
+    if used_trim_start < 0 or used_trim_end < 0:
         raise ValueError(
-            f"Requested trimming_start {trimming_start}s and trimming_end {trimming_end}s "
+            f"trimming_start and trimming_end must be >= 0, got "
+            f"{used_trim_start}, {used_trim_end}"
+        )
+
+    if used_trim_start + used_trim_end >= duration:
+        raise ValueError(
+            f"Requested trimming_start {used_trim_start}s and trimming_end {used_trim_end}s "
             f"remove >= full duration {duration:.4f}s"
         )
-    
-    # Effective absolute times to keep
-    if trimming_start > 0:
-        t_start = t[0] + trimming_start
+
+    if used_trim_start > 0:
+        t_start = t[0] + used_trim_start
     else:
         t_start = t[0]
-    
-    if trimming_end > 0:
-        t_end = t[-1] - trimming_end
+
+    if used_trim_end > 0:
+        t_end = t[-1] - used_trim_end
     else:
         t_end = t[-1]
-    
+
     if t_start >= t_end:
         raise ValueError(
-            f"After applying trimming_start={trimming_start} and trimming_end={trimming_end}, "
+            f"After applying trimming_start={used_trim_start} and trimming_end={used_trim_end}, "
             f"t_start={t_start:.6f} >= t_end={t_end:.6f}"
         )
-    
-    # Find indices: first frame >= t_start, last frame <= t_end
+
     idx_start = np.where(t >= np.round(t_start, 6))[0][0]
-    idx_end = np.where(t <= np.round(t_end, 6))[0][-1] + 1  # slice end is exclusive
-    
-    # Final safety check
+    idx_end = np.where(t <= np.round(t_end, 6))[0][-1] + 1
+
     if idx_end <= idx_start:
         raise ValueError(
             f"Invalid trimming: idx_start={idx_start}, idx_end={idx_end}. "
             f"t_start={t_start:.6f}, t_end={t_end:.6f}"
         )
-    
-    # Apply trimming
+
     times = times[idx_start:idx_end]
     marker_xyz = marker_xyz[idx_start:idx_end, :]
     frame = frame[idx_start:idx_end]
@@ -916,31 +956,50 @@ def refine_foot_kinematics_trc(
     marker_names = extract_marker_names(header)
     marker_names = [n for n in marker_names if n not in ['Frame#', 'Time']]
 
-    # Filter markers if requested (BEFORE optimization and renaming)
     if filter_markers_on_save:
         marker_names, marker_xyz = filter_markers_by_mapping_keys(
-            marker_names, 
-            marker_xyz, 
+            marker_names,
+            marker_xyz,
             marker_mapping
         )
 
-    # resolve foot marker names by priority:
-    # *_study_offsetRemoved > *_study > base name
+    n_frames = marker_xyz.shape[0]
+
+    # Clip masks to match the trimmed TRC frame count.  The gait-analysis
+    # trimming and TRC trimming can differ by one frame due to floating-point
+    # rounding on the time boundaries.
+    mask_ips  = mask_ips[:n_frames]
+    mask_cont = mask_cont[:n_frames]
+
+    if n_frames < 10:
+        print(f"  Too few frames ({n_frames}) in {trc_path}, skipping foot optimization.")
+        if rename_markers_on_save:
+            output_marker_names = rename_markers(marker_names, marker_mapping)
+        else:
+            output_marker_names = marker_names
+
+        out_basename = f"MarkerData_optfeet_{trial_stem_norm}"
+        out_basename = make_unique_out_basename(save_dir, out_basename)
+
+        write_trc_file(
+            time=times,
+            mrkdata=marker_xyz,
+            mrknames=output_marker_names,
+            directory=save_dir,
+            file=out_basename,
+        )
+        return os.path.join(save_dir, out_basename + '.trc')
+
     if foot_marker_names is None:
         foot_marker_names = select_foot_marker_names(marker_names)
 
-    # foot matrix and contact mask
     foot_matrix = create_foot_marker_matrix(foot_marker_names, marker_names, marker_xyz)
     y_coords = foot_matrix[0, :, 1, :].T  # (T,4)
     contact_mask_np = make_contact_mask(y_coords, mask_ips, mask_cont, toe_threshold, heel_threshold)
-    
-    # match old behavior: inherit dtype from numpy (likely float64)
-    contact_mask = torch.tensor(contact_mask_np)  
-    
-    feet_tensor = torch.tensor(foot_matrix).permute(0, 3, 1, 2)
-    
 
-    # optimizer
+    contact_mask = torch.tensor(contact_mask_np)
+    feet_tensor = torch.tensor(foot_matrix).permute(0, 3, 1, 2)
+
     optimizer = FootPositionOptimizer(
         marker_positions=marker_xyz,
         frame_rate=int(frame_rate),
@@ -953,33 +1012,61 @@ def refine_foot_kinematics_trc(
         weights=weights,
     )
 
+    try:
+        output = optimizer.optimize()
+    except IndexError as e:
+        print(f"  FootPositionOptimizer failed for {trc_path} with IndexError: {e}")
+        print("  Skipping optimization and using original marker positions.")
+        if rename_markers_on_save:
+            output_marker_names = rename_markers(marker_names, marker_mapping)
+        else:
+            output_marker_names = marker_names
 
+        out_basename = f"MarkerData_optfeet_{trial_stem_norm}"
+        out_basename = make_unique_out_basename(save_dir, out_basename)
 
-    output = optimizer.optimize()
+        write_trc_file(
+            time=times,
+            mrkdata=marker_xyz,
+            mrknames=output_marker_names,
+            directory=save_dir,
+            file=out_basename,
+        )
+        return os.path.join(save_dir, out_basename + '.trc')
 
-    # offset
     offset = output['offset'].detach().cpu().numpy()   # (1,T,1,3)
     offset = offset.reshape(-1, 3)                     # (T,3)
     offset_y = offset[:, 1]
 
-    # filter offset_y
     filt_freq = 6.0
     nyquist = 0.5 * (1.0 / np.mean(np.diff(times)))
     wn = filt_freq / nyquist
     sos = butter(2, wn, btype='low', output='sos')
-    offset_y_filt = sosfiltfilt(sos, offset_y, padlen=50)
+    try:
+        offset_y_filt = sosfiltfilt(sos, offset_y, padlen=50)
+    except ValueError as e:
+        print(f"  Warning: {e}. Retrying with a shorter pad length.")
+        n = len(offset_y)
+        if n > 3:
+            new_padlen = max(1, n - 1)
+            print(f"  Using padlen={new_padlen} for {trc_path}")
+            offset_y_filt = sosfiltfilt(sos, offset_y, padlen=new_padlen)
+        else:
+            print(f"  Signal too short to filter for {trc_path}. Copying original values.")
+            offset_y_filt = offset_y.copy()
 
     offset_y_filt = offset_y_filt[:, None]
     updated_marker_xyz = marker_xyz.copy()
     updated_marker_xyz[:, 1::3] += offset_y_filt
 
-    # Rename markers if requested (after optimization, markers were already filtered before)
     if rename_markers_on_save:
         output_marker_names = rename_markers(marker_names, marker_mapping)
     else:
         output_marker_names = marker_names
 
-    out_basename = f"MarkerData_optfeet_{trial_name}"
+    out_basename = f"MarkerData_optfeet_{trial_stem_norm}"
+    out_basename = make_unique_out_basename(save_dir, out_basename)
+
     write_trc_file(
         time=times,
         mrkdata=updated_marker_xyz,
@@ -991,87 +1078,84 @@ def refine_foot_kinematics_trc(
     out_path = os.path.join(save_dir, out_basename + '.trc')
     return out_path
 
+
 def get_trc_frame_rate(trc_path):
     """
     Extract the frame rate from a TRC file by reading only the header.
-
-    Returns:
-        float : frame rate (Hz)
     """
     with open(trc_path, 'r') as f:
         lines = f.readlines()
 
-    # Line 2 of TRC header contains DataRate, CameraRate, NumFrames...
-    # Example:
-    # DataRate	CameraRate	NumFrames	NumMarkers	Units	OrigDataRate	OrigDataStartFrame	OrigNumFrames
-    # 60.00       60.00       186         181         mm      60.00           1                   186
-
-    # Look for the line that contains numeric values for DataRate
     for line in lines:
         parts = line.strip().split()
-        # Look for float-like strings followed by more numbers
         if len(parts) >= 2:
             try:
-                data_rate = float(parts[0])  # this is typically DataRate
+                data_rate = float(parts[0])
                 camera_rate = float(parts[1])
-                return camera_rate  # both are the same, either is fine
+                return camera_rate
             except ValueError:
                 continue
 
     raise ValueError(f"Could not extract frame rate from TRC file: {trc_path}")
 
+
 def refine_foot_kinematics_for_session(
-    session_folder, 
-    trial_prefix, 
-    gait_style, 
+    session_folder,
+    trial_prefix,
+    gait_style,
     trimming_start,
     trimming_end,
     rename_markers_on_save=True,
     filter_markers_on_save=True,
     marker_mapping=None,
+    do_not_refine=False,
 ):
     """
     Run kinematics refinement for better foot contact.
-    
-    Parameters
-    ----------
-    session_folder : Path or str
-        Path to the session folder.
-    trial_prefix : str
-        Prefix to filter trial names.
-    gait_style : str
-        Gait style ('overground' or 'treadmill').
-    rename_markers_on_save : bool
-        If True, rename markers using marker_mapping after optimization.
-    filter_markers_on_save : bool
-        If True, filter markers to only include those in marker_mapping BEFORE optimization.
-    marker_mapping : dict, optional
-        Dictionary mapping old marker names to new names.
+
+    If do_not_refine is True (or 1), TRCs are simply copied to the
+    ForGaitDynamics folder with the MarkerData_optfeet_<trial>.trc
+    naming convention, without any gait processing or optimization.
     """
-    
     session_folder = Path(session_folder)
-    
+
     marker_trc_dir = session_folder / "MarkerData"
     refined_trc_dir = session_folder / "ForGaitDynamics"
     refined_trc_dir.mkdir(parents=True, exist_ok=True)
 
     for fname in os.listdir(marker_trc_dir):
         if (
-            fname.endswith(".trc") 
-            and "Optimized" not in fname
+            fname.endswith(".trc")
+            and "optimized" not in fname.lower()
             and (not trial_prefix or fname.startswith(trial_prefix))
         ):
             trc_path = marker_trc_dir / fname
+
+            if do_not_refine:
+                print(f"  Skipping refinement for {fname}, writing unmodified TRC.")
+                save_unmodified_trc(
+                    trc_path=str(trc_path),
+                    save_dir=str(refined_trc_dir),
+                    rename_markers_on_save=rename_markers_on_save,
+                    filter_markers_on_save=filter_markers_on_save,
+                    marker_mapping=marker_mapping,
+                )
+                continue
+
             print(f"  Optimizing foot positions for {fname}")
-            refine_foot_kinematics_trc(
-                trc_path=str(trc_path),
-                session_dir=str(session_folder),
-                save_dir=str(refined_trc_dir),
-                gait_style=gait_style,
-                trimming_start=trimming_start,
-                trimming_end=trimming_end,
-                frame_rate=get_trc_frame_rate(trc_path),
-                rename_markers_on_save=rename_markers_on_save,
-                filter_markers_on_save=filter_markers_on_save,
-                marker_mapping=marker_mapping,
-            )
+            try:
+                refine_foot_kinematics_trc(
+                    trc_path=str(trc_path),
+                    session_dir=str(session_folder),
+                    save_dir=str(refined_trc_dir),
+                    gait_style=gait_style,
+                    trimming_start=trimming_start,
+                    trimming_end=trimming_end,
+                    frame_rate=get_trc_frame_rate(trc_path),
+                    rename_markers_on_save=rename_markers_on_save,
+                    filter_markers_on_save=filter_markers_on_save,
+                    marker_mapping=marker_mapping,
+                )
+            except (ValueError, IndexError) as e:
+                print(f"  Skipping {fname} due to gait processing error: {e}")
+                continue

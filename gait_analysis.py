@@ -78,36 +78,65 @@ class gait_analysis_MoCap(kinematics):
     
     
     def rotate_x_forward(self):
-        # Find the midpoint of the PSIS markers
-        try:
-            psis_midpoint = (self.markerDict['markers']['r.PSIS'] +
-                         self.markerDict['markers']['L.PSIS']) / 2
-        except Exception as e:
-            psis_midpoint = (
-                self.markerDict['markers']['r.PSIS_study'] + self.markerDict['markers']['L.PSIS_study']) / 2
-
-        # Find the midpoint of the ASIS markers
-        try:
-            asis_midpoint = (self.markerDict['markers']['r.ASIS'] + self.markerDict['markers']['L.ASIS']) / 2
-        except Exception as e:
-            asis_midpoint = (self.markerDict['markers']['r.ASIS_study'] + self.markerDict['markers']['L.ASIS_study']) / 2
-
-        # Compute the vector pointing from the PSIS midpoint to the ASIS midpoint
+        """
+        Rotate the marker set so the pelvis faces +X (using ASIS/PSIS midpoints).
+    
+        Supports any of these naming schemes:
+          - target names: r.PSIS / L.PSIS / r.ASIS / L.ASIS
+          - legacy study: r.PSIS_study / L.PSIS_study / r.ASIS_study / L.ASIS_study
+          - monocular:    r_PSIS / l_PSIS / r_ASIS / l_ASIS
+          - offsetRemoved: r.PSIS_study_offsetRemoved / L.PSIS_study_offsetRemoved / etc
+        """
+    
+        def _get_marker(name):
+            return self.markerDict['markers'][name]
+    
+        def _midpoint(candidates_r, candidates_l, label):
+            last_err = None
+            for r_name in candidates_r:
+                for l_name in candidates_l:
+                    try:
+                        return (_get_marker(r_name) + _get_marker(l_name)) / 2.0
+                    except KeyError as e:
+                        last_err = e
+                        continue
+            raise KeyError(
+                f"Could not find a valid {label} marker pair. "
+                f"Tried R in {candidates_r} and L in {candidates_l}. "
+                f"Last error: {last_err}"
+            )
+    
+        # PSIS midpoint (R + L)/2
+        psis_midpoint = _midpoint(
+            candidates_r=['r.PSIS', 'r.PSIS_study', 'r.PSIS_study_offsetRemoved', 'r_PSIS'],
+            candidates_l=['L.PSIS', 'L.PSIS_study', 'L.PSIS_study_offsetRemoved', 'l_PSIS'],
+            label='PSIS'
+        )
+    
+        # ASIS midpoint (R + L)/2
+        asis_midpoint = _midpoint(
+            candidates_r=['r.ASIS', 'r.ASIS_study', 'r.ASIS_study_offsetRemoved', 'r_ASIS'],
+            candidates_l=['L.ASIS', 'L.ASIS_study', 'L.ASIS_study_offsetRemoved', 'l_ASIS'],
+            label='ASIS'
+        )
+    
+        # Vector from PSIS midpoint to ASIS midpoint
         heading_vector = asis_midpoint - psis_midpoint
-
-        # Compute the angle between the heading vector projected onto x-z plane and x-axis
-        angle = np.unwrap(np.arctan2(heading_vector[:,2], heading_vector[:,0]))
-
-        # compute average angle during middle 50% of the trial
+    
+        # Angle between heading projected onto x-z plane and +x axis
+        angle_rad = np.unwrap(np.arctan2(heading_vector[:, 2], heading_vector[:, 0]))
+    
+        # Average over middle 50% of trial
         n_frames = len(self.markerDict['time'])
         start_index = int(n_frames * 0.25)
         end_index = int(n_frames * 0.75)
-        angle = np.degrees(np.mean(angle[start_index:end_index], axis=0))
+        angle_deg = np.degrees(np.mean(angle_rad[start_index:end_index], axis=0))
+    
+        # Apply rotation
+        marker_dict_rotated = self.rotate_marker_dict(self.markerDict, {'y': angle_deg})
+    
+        return angle_deg, marker_dict_rotated
 
-        # Apply the rotation to the marker data
-        marker_dict_rotated = self.rotate_marker_dict(self.markerDict, {'y':angle})
-
-        return angle, marker_dict_rotated
     
         
     
@@ -188,35 +217,75 @@ class gait_analysis_MoCap(kinematics):
         except KeyError:
             r_toe_m = self.markerDict['markers']['r_toe']
         
-        try:
-            r_PSIS_m = self.markerDict['markers']['r.PSIS_study']
-        except KeyError:
-            r_PSIS_m = self.markerDict['markers']['r.PSIS']
-        
+    
         try:
             L_calc_m = self.markerDict['markers']['L_calc_study']
-        except KeyError:
-            L_calc_m = self.markerDict['markers']['L_calc']
+        except KeyError:            
+            try:
+                L_calc_m = self.markerDict['markers']['L_calc']
+            except KeyError:
+                L_calc_m = self.markerDict['markers']['l_calc']
         
         try:
             L_toe_m = self.markerDict['markers']['L_toe_study']
         except KeyError:
-            L_toe_m = self.markerDict['markers']['L_toe']
-        
+            try:
+                L_toe_m = self.markerDict['markers']['L_toe']
+            except KeyError:
+                L_toe_m = self.markerDict['markers']['l_toe']
+                 
+            
+        # Right PSIS
         try:
-            L_PSIS_m = self.markerDict['markers']['L.PSIS_study']
+            r_PSIS_m = self.markerDict['markers']['r.PSIS_study_offsetRemoved']
         except KeyError:
-            L_PSIS_m = self.markerDict['markers']['L.PSIS']
+            try:
+                r_PSIS_m = self.markerDict['markers']['r.PSIS_study']
+            except KeyError:
+                try:
+                    r_PSIS_m = self.markerDict['markers']['r.PSIS']
+                except KeyError:
+                    r_PSIS_m = self.markerDict['markers']['r_PSIS']
         
-        try:
-            r_ASIS_m = self.markerDict['markers']['r.ASIS_study']
-        except KeyError:
-            r_ASIS_m = self.markerDict['markers']['r.ASIS']
         
+        # Left PSIS
         try:
-            L_ASIS_m = self.markerDict['markers']['L.ASIS_study']
+            L_PSIS_m = self.markerDict['markers']['L.PSIS_study_offsetRemoved']
         except KeyError:
-            L_ASIS_m = self.markerDict['markers']['L.ASIS']
+            try:
+                L_PSIS_m = self.markerDict['markers']['L.PSIS_study']
+            except KeyError:
+                try:
+                    L_PSIS_m = self.markerDict['markers']['L.PSIS']
+                except KeyError:
+                    L_PSIS_m = self.markerDict['markers']['l_PSIS']
+        
+        
+        # Right ASIS
+        try:
+            r_ASIS_m = self.markerDict['markers']['r.ASIS_study_offsetRemoved']
+        except KeyError:
+            try:
+                r_ASIS_m = self.markerDict['markers']['r.ASIS_study']
+            except KeyError:
+                try:
+                    r_ASIS_m = self.markerDict['markers']['r.ASIS']
+                except KeyError:
+                    r_ASIS_m = self.markerDict['markers']['r_ASIS']
+        
+        
+        # Left ASIS
+        try:
+            L_ASIS_m = self.markerDict['markers']['L.ASIS_study_offsetRemoved']
+        except KeyError:
+            try:
+                L_ASIS_m = self.markerDict['markers']['L.ASIS_study']
+            except KeyError:
+                try:
+                    L_ASIS_m = self.markerDict['markers']['L.ASIS']
+                except KeyError:
+                    L_ASIS_m = self.markerDict['markers']['l_ASIS']
+
         
         
         # Subtract sacrum from foot.
@@ -431,25 +500,16 @@ def process_gait_data(session_dir, trial_name, leg, lowpass_cutoff_frequency, n_
     marker_dict = gait_analysis_l.markerDictRotated
     
     # Extract foot marker positions from the rotated marker data
-    try:
-        r_calc = marker_dict['markers']['r_calc_study']
-    except KeyError:
-        r_calc = marker_dict['markers']['r_calc']
-    
-    try:
-        r_toe = marker_dict['markers']['r_toe_study']
-    except KeyError:
-        r_toe = marker_dict['markers']['r_toe']
-    
-    try:
-        L_calc = marker_dict['markers']['L_calc_study']
-    except KeyError:
-        L_calc = marker_dict['markers']['L_calc']
-    
-    try:
-        L_toe = marker_dict['markers']['L_toe_study']
-    except KeyError:
-        L_toe = marker_dict['markers']['L_toe']
+    def _get_marker(markers, *names):
+        for name in names:
+            if name in markers:
+                return markers[name]
+        raise KeyError(f"None of {names} found in marker dict. Available: {list(markers.keys())}")
+
+    r_calc = _get_marker(marker_dict['markers'], 'r_calc_study', 'r_calc')
+    r_toe  = _get_marker(marker_dict['markers'], 'r_toe_study',  'r_toe')
+    L_calc = _get_marker(marker_dict['markers'], 'L_calc_study', 'L_calc', 'l_calc')
+    L_toe  = _get_marker(marker_dict['markers'], 'L_toe_study',  'L_toe',  'l_toe')
     
     foot_positions = {
         'right': {

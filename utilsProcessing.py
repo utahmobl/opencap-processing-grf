@@ -724,7 +724,6 @@ def generate_model_with_contacts(
     
 
 
-import numpy as np
 
 def map_stance_phase(gait_events, time_len):
     """

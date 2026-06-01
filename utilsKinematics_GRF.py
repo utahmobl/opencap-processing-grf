@@ -46,9 +46,18 @@ class kinematics:
         modelBasePath = os.path.join(sessionDir, 'OpenSimData', 'Model')
         # Load model if specified, otherwise load the one that was on server
         modelName = 'LaiUhlrich2022_scaled'
-        modelPath = os.path.join(modelBasePath,
-                                 '{}.osim'.format(modelName))
-            
+        modelPath = os.path.join(modelBasePath, '{}.osim'.format(modelName))
+
+        # OpenCap places the scaled model in a trial-named subfolder
+        # (e.g. Model/walking_vertical/LaiUhlrich2022_scaled.osim).
+        # Fall back to searching subfolders if the top-level path is missing.
+        if not os.path.exists(modelPath):
+            for sub in os.listdir(modelBasePath):
+                candidate = os.path.join(modelBasePath, sub, '{}.osim'.format(modelName))
+                if os.path.exists(candidate):
+                    modelPath = candidate
+                    break
+
         # make sure model exists
         if not os.path.exists(modelPath):
             raise Exception('Model path: ' + modelPath + ' does not exist.')
