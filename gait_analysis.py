@@ -474,20 +474,48 @@ def process_gait_data(session_dir, trial_name, leg, lowpass_cutoff_frequency, n_
     - mask_ips: Binary mask for Ips.
     - mask_cont: Binary mask for Cont.
     """
-    # Initialize gait analysis 
-    gait_analysis_l = gait_analysis_MoCap(
-        session_dir=session_dir,
-        trial_name=trial_name,
-        leg=leg,
-        lowpass_cutoff_frequency_for_coordinate_values=lowpass_cutoff_frequency,
-        n_gait_cycles=n_gait_cycles,
-        gait_style=gait_style,
-        trimming_start=trimming_start,
-        trimming_end=trimming_end
-    )
-    
-    
-    
+    # Initialize gait analysis, retrying with progressively more trimming if
+    # gait event ordering fails (common with noisy start/end frames).
+    max_extra = 0.5
+    step = 0.1
+    extra = 0.0
+    gait_analysis_l = None
+    last_error = None
+
+    while extra <= max_extra + 1e-9:
+        ts = trimming_start + extra
+        te = trimming_end + extra
+        try:
+            gait_analysis_l = gait_analysis_MoCap(
+                session_dir=session_dir,
+                trial_name=trial_name,
+                leg=leg,
+                lowpass_cutoff_frequency_for_coordinate_values=lowpass_cutoff_frequency,
+                n_gait_cycles=n_gait_cycles,
+                gait_style=gait_style,
+                trimming_start=ts,
+                trimming_end=te,
+            )
+            if extra > 0:
+                print(
+                    f"  Gait events fixed with trimming_start={ts:.2f}s, "
+                    f"trimming_end={te:.2f}s"
+                )
+            break
+        except ValueError as e:
+            if "ordering of gait events" in str(e):
+                last_error = e
+                extra = round(extra + step, 10)
+                continue
+            raise
+
+    if gait_analysis_l is None:
+        raise ValueError(
+            "The ordering of gait events is not correct even after iterative "
+            f"trimming up to {max_extra}s. Consider increasing trimming_start/"
+            "trimming_end manually."
+        ) from last_error
+
     # Extract gait events from the gait analysis object
     gait_events = gait_analysis_l.gaitEvents
     

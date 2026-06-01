@@ -739,7 +739,10 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions = 'None', c
     # %% GRF data to track
     if track_grfs:
         from utilsOpenSimAD import getGRF_forTracking
-        pathGRF = os.path.join(pathForceFolder, trialName + '_forces.mot')
+        # Prefer foot-optimized GRF file if it exists, fall back to plain name.
+        _pathGRF_opt   = os.path.join(pathForceFolder, trialName + '_Optimized_forces.mot')
+        _pathGRF_plain = os.path.join(pathForceFolder, trialName + '_forces.mot')
+        pathGRF = _pathGRF_opt if os.path.exists(_pathGRF_opt) else _pathGRF_plain
         GRF_input = getGRF_forTracking(pathGRF)
 
         # Filtering
@@ -787,7 +790,7 @@ def run_tracking(baseDir, dataDir, subject, settings, foot_positions = 'None', c
         from scipy.signal import savgol_filter  
         from utilsOpenSimAD import getCOPx_forTracking
         
-        pathGRF = os.path.join(pathForceFolder, trialName + '_forces.mot')
+        pathGRF = _pathGRF_opt if os.path.exists(_pathGRF_opt) else _pathGRF_plain
         COP_input = getCOPx_forTracking(pathGRF)
 
         # # Filtering
